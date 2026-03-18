@@ -31,11 +31,24 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
         .map(|(i, run)| format_run_line(i, run))
         .collect();
 
-    let selection = run_fzf(&lines, "workflow run")?;
+    if action == "detail" {
+        // Loop: run picker ↔ detail view. Esc in detail goes back to runs.
+        loop {
+            let selection = match run_fzf(&lines, "workflow run") {
+                Ok(s) => s,
+                Err(_) => return Ok(()), // Esc at run list = exit
+            };
+            let run_idx = extract_index(&selection);
+            if let Some(run) = run_idx.and_then(|i| all_runs.get(i)) {
+                match show_detail(client, run).await {
+                    Ok(()) => return Ok(()), // opened in browser, done
+                    Err(_) => continue,      // Esc in detail = back to runs
+                }
+            }
+        }
+    }
 
-    // Parse the index from the hidden prefix
-    let run_idx = extract_index(&selection);
-    let selected_run = run_idx.and_then(|i| all_runs.get(i));
+    let selection = run_fzf(&lines, "workflow run")?;
 
     match action {
         "url" => {
@@ -48,13 +61,7 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
                 println!("{num}");
             }
         }
-        "detail" => {
-            if let Some(run) = selected_run {
-                show_detail(client, run).await?;
-            }
-        }
         _ => {
-            // "open" (default)
             if let Some(u) = extract_url(&selection) {
                 open::that(u)?;
             }
