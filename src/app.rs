@@ -14,6 +14,7 @@ pub enum View {
     Dashboard,
     Detail,
     RepoPicker,
+    LogView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +59,10 @@ pub struct App {
     pub explicit_repos: Vec<String>,
     pub watched_set: HashSet<String>,
     pub picker_state: TableState,
+    // Log viewer
+    pub log_lines: Vec<String>,
+    pub log_scroll: usize,
+    pub log_job_name: String,
 }
 
 impl App {
@@ -93,6 +98,9 @@ impl App {
             explicit_repos: explicit,
             watched_set,
             picker_state: TableState::default().with_selected(0),
+            log_lines: Vec::new(),
+            log_scroll: 0,
+            log_job_name: String::new(),
         }
     }
 
@@ -103,6 +111,7 @@ impl App {
         }
         match self.view {
             View::RepoPicker => return self.handle_picker_key(key),
+            View::LogView => return self.handle_log_key(key),
             _ => {}
         }
         match self.input_mode {
@@ -111,7 +120,7 @@ impl App {
             InputMode::Normal => match self.view {
                 View::Dashboard => self.handle_dashboard_key(key),
                 View::Detail => self.handle_detail_key(key),
-                View::RepoPicker => unreachable!(),
+                View::RepoPicker | View::LogView => unreachable!(),
             },
         }
     }
@@ -295,6 +304,45 @@ impl App {
             }
             KeyCode::Enter | KeyCode::Char('o') => return self.open_in_browser(),
             KeyCode::Char('R') => return self.rerun_current(),
+            KeyCode::Char('L') | KeyCode::Char('l') => return self.view_logs(),
+            _ => {}
+        }
+        None
+    }
+
+    fn handle_log_key(&mut self, key: KeyEvent) -> Option<AppAction> {
+        let max_scroll = self.log_lines.len().saturating_sub(self.visible_rows);
+        match key.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc => {
+                self.view = View::Detail;
+                self.log_lines.clear();
+                self.log_scroll = 0;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.log_scroll = (self.log_scroll + 1).min(max_scroll);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.log_scroll = self.log_scroll.saturating_sub(1);
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let jump = self.half_page();
+                self.log_scroll = (self.log_scroll + jump).min(max_scroll);
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let jump = self.half_page();
+                self.log_scroll = self.log_scroll.saturating_sub(jump);
+            }
+            KeyCode::PageDown => {
+                let jump = self.half_page();
+                self.log_scroll = (self.log_scroll + jump).min(max_scroll);
+            }
+            KeyCode::PageUp => {
+                let jump = self.half_page();
+                self.log_scroll = self.log_scroll.saturating_sub(jump);
+            }
+            KeyCode::Char('g') => self.log_scroll = 0,
+            KeyCode::Char('G') => self.log_scroll = max_scroll,
             _ => {}
         }
         None
@@ -430,6 +478,40 @@ impl App {
         }
     }
 
+    fn selected_job(&self) -> Option<&Job> {
+        let row = self.detail_state.selected()?;
+        let mut idx = 0;
+        for job in &self.jobs {
+            if idx == row {
+                return Some(job);
+            }
+            idx += 1;
+            let step_count = job.steps.as_ref().map_or(0, |s| s.len());
+            if row < idx + step_count {
+                // Selected a step — return its parent job
+                return Some(job);
+            }
+            idx += step_count;
+        }
+        None
+    }
+
+    fn view_logs(&mut self) -> Option<AppAction> {
+        let job = self.selected_job()?;
+        if job.status != RunStatus::Completed {
+            self.set_error("Logs only available for completed jobs".to_string());
+            return None;
+        }
+        let repo = self.current_run_repo.clone()?;
+        let job_id = job.id;
+        let job_name = job.name.clone();
+        self.log_lines.clear();
+        self.log_scroll = 0;
+        self.log_job_name = job_name;
+        self.view = View::LogView;
+        Some(AppAction::FetchLogs(repo, job_id))
+    }
+
     fn rerun_selected(&self) -> Option<AppAction> {
         let run = self.selected_run()?;
         let repo = run.repository.full_name.clone();
@@ -450,6 +532,13 @@ impl App {
         } else {
             Some(AppAction::RerunWorkflow(repo, run_id))
         }
+    }
+
+    pub fn update_logs(&mut self, text: String) {
+        self.log_lines = text.lines().map(String::from).collect();
+        // Auto-scroll to end (tail behavior)
+        let max = self.log_lines.len().saturating_sub(self.visible_rows);
+        self.log_scroll = max;
     }
 
     pub fn update_runs(&mut self, runs: Vec<WorkflowRun>, rate_limit: RateLimit) {
@@ -574,4 +663,5 @@ pub enum AppAction {
     ReposChanged(Vec<String>),
     RerunWorkflow(String, u64),
     RerunFailed(String, u64),
+    FetchLogs(String, u64),
 }

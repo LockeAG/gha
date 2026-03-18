@@ -1,6 +1,7 @@
 pub mod dashboard;
 pub mod detail;
 pub mod header;
+pub mod logs;
 pub mod picker;
 pub mod theme;
 
@@ -45,6 +46,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         View::Dashboard => dashboard::render(frame, chunks[1], app),
         View::Detail => detail::render(frame, chunks[1], app),
         View::RepoPicker => picker::render(frame, chunks[1], app),
+        View::LogView => logs::render(frame, chunks[1], app),
     }
 
     render_footer(frame, chunks[2], app);
@@ -93,7 +95,13 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
             ],
             View::Detail => vec![
                 key(" j/k"), lbl(" nav "), key("^d/^u"), lbl(" page "),
-                key("o"), lbl(" open "), key("R"), lbl(" rerun "),
+                key("o"), lbl(" open "), key("L"), lbl(" logs "),
+                key("R"), lbl(" rerun "),
+                key("ESC"), lbl(" back "), key("q"), lbl(" quit"),
+            ],
+            View::LogView => vec![
+                key(" j/k"), lbl(" scroll "), key("^d/^u"), lbl(" page "),
+                key("g/G"), lbl(" top/end "),
                 key("ESC"), lbl(" back "), key("q"), lbl(" quit"),
             ],
         },

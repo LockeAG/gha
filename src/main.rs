@@ -455,6 +455,7 @@ async fn run_app(
                     let _ = active_tx.send(app.has_in_progress);
                 }
                 AppEvent::JobsUpdated(run_id, jobs) => app.update_jobs(run_id, jobs),
+                AppEvent::LogsFetched(text) => app.update_logs(text),
                 AppEvent::ApiError(err) => app.set_error(err),
                 AppEvent::LoadingDone => app.mark_loading_done(),
             }
@@ -541,6 +542,20 @@ async fn handle_action(
                     }
                     Err(e) => {
                         let _ = t.send(AppEvent::ApiError(format!("rerun: {e}"))).await;
+                    }
+                }
+            });
+        }
+        AppAction::FetchLogs(repo, job_id) => {
+            let c = client.clone();
+            let t = tx.clone();
+            tokio::spawn(async move {
+                match c.fetch_job_logs(&repo, job_id).await {
+                    Ok(text) => {
+                        let _ = t.send(AppEvent::LogsFetched(text)).await;
+                    }
+                    Err(e) => {
+                        let _ = t.send(AppEvent::ApiError(format!("logs: {e}"))).await;
                     }
                 }
             });

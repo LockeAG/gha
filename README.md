@@ -114,8 +114,19 @@ Three built-in themes via `--theme`:
 | `j` / `k` | Scroll jobs/steps |
 | `Ctrl-d` / `Ctrl-u` | Half-page scroll |
 | `o` / `Enter` | Open in browser |
+| `L` / `l` | View job logs (completed jobs only) |
 | `R` | Re-run workflow |
 | `Esc` | Back to dashboard |
+| `q` | Quit |
+
+### Log viewer
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Scroll line by line |
+| `Ctrl-d` / `Ctrl-u` | Half-page scroll |
+| `g` / `G` | Jump to top / bottom |
+| `Esc` | Back to detail view |
 | `q` | Quit |
 
 ### Repo picker
@@ -208,7 +219,7 @@ This is the same access pattern as the `gh` CLI and other GitHub API clients. No
 - [x] Homebrew tap (`brew install LockeAG/tap/gha`)
 - [x] Prebuilt binaries (macOS arm64/x86_64, Linux x86_64/arm64)
 - [x] Workflow re-run from TUI (`R` key, smart: reruns failed jobs only on failures)
-- [ ] Log tailing for in-progress steps (GitHub API limitation: no true streaming)
+- [x] Log viewer for completed jobs (`L` key in detail view, auto-tails to end)
 - [x] Config file (`~/.config/gha/config.toml`, `gha init`)
 
 ## License

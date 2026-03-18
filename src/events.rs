@@ -8,6 +8,7 @@ pub enum AppEvent {
     Tick,
     RunsUpdated(Vec<WorkflowRun>, RateLimit),
     JobsUpdated(u64, Vec<Job>),
+    LogsFetched(String),
     ApiError(String),
     LoadingDone,
 }

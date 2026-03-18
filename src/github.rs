@@ -140,6 +140,19 @@ impl GithubClient {
         Ok(())
     }
 
+    pub async fn fetch_job_logs(&self, repo: &str, job_id: u64) -> Result<String> {
+        let url =
+            format!("https://api.github.com/repos/{repo}/actions/jobs/{job_id}/logs");
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("fetch logs")?;
+        let text = resp.error_for_status()?.text().await?;
+        Ok(text)
+    }
+
     pub async fn fetch_jobs(&self, repo: &str, run_id: u64) -> Result<(JobsResponse, RateLimit)> {
         let url =
             format!("https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs");
