@@ -39,11 +39,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let lines: Vec<Line> = app.log_lines[start..end]
         .iter()
         .map(|line| {
-            // Color error/warning lines
-            let style = if line.contains("error") || line.contains("Error") || line.contains("FAILED") {
+            let style = if is_error_line(line) {
                 Style::default().fg(th.failure)
-            } else if line.contains("warning") || line.contains("Warning") {
+            } else if is_warning_line(line) {
                 Style::default().fg(th.running)
+            } else if line.starts_with("##[group]") || line.starts_with("##[endgroup]") {
+                Style::default().fg(th.queued).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(th.dim_fg)
             };
@@ -73,4 +74,36 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         );
 
     frame.render_widget(log_view, area);
+}
+
+fn is_error_line(line: &str) -> bool {
+    // GitHub Actions annotation format
+    if line.starts_with("##[error]") {
+        return true;
+    }
+    let trimmed = line.trim_start();
+    // Common error prefixes (word boundary — not substring)
+    trimmed.starts_with("Error:")
+        || trimmed.starts_with("ERROR ")
+        || trimmed.starts_with("error:")
+        || trimmed.starts_with("error[")
+        || trimmed.starts_with("FAILED")
+        || trimmed.starts_with("FAIL ")
+        || trimmed.starts_with("fatal:")
+        || trimmed.starts_with("panic:")
+        || trimmed.contains("): error")
+        || trimmed.contains("]: error")
+}
+
+fn is_warning_line(line: &str) -> bool {
+    if line.starts_with("##[warning]") {
+        return true;
+    }
+    let trimmed = line.trim_start();
+    trimmed.starts_with("Warning:")
+        || trimmed.starts_with("WARNING ")
+        || trimmed.starts_with("warning:")
+        || trimmed.starts_with("warning[")
+        || trimmed.contains("): warning")
+        || trimmed.contains("]: warning")
 }

@@ -1,6 +1,6 @@
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Row, Table};
 use ratatui::Frame;
 
@@ -55,12 +55,22 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(10), Constraint::Fill(4),
     ];
 
+    let legend = Line::from(vec![
+        Span::styled(" \u{25C9}", Style::default().fg(th.success)),
+        Span::styled(" watched ", Style::default().fg(th.dim_fg)),
+        Span::styled("\u{25CF}", Style::default().fg(th.queued)),
+        Span::styled(" pinned ", Style::default().fg(th.dim_fg)),
+        Span::styled("\u{25CB}", Style::default().fg(th.dim_fg)),
+        Span::styled(" off ", Style::default().fg(th.dim_fg)),
+    ]);
+
     let table = Table::new(rows, widths)
         .row_highlight_style(Style::default().bg(th.selected_bg).add_modifier(Modifier::BOLD))
         .highlight_symbol("\u{25B8} ")
         .block(
             Block::default()
                 .title(title)
+                .title_bottom(legend)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(th.border))
                 .title_style(Style::default().fg(th.header_fg))

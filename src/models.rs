@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
@@ -9,6 +7,7 @@ pub struct WorkflowRunsResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct WorkflowRun {
     pub id: u64,
     pub name: Option<String>,
@@ -78,6 +77,7 @@ pub struct JobsResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Job {
     pub id: u64,
     pub run_id: u64,
@@ -91,6 +91,7 @@ pub struct Job {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Step {
     pub name: String,
     pub status: RunStatus,
