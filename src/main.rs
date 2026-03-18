@@ -80,7 +80,7 @@ enum Command {
 enum FzfMode {
     /// Pick a workflow run
     Runs {
-        /// Action on selection: open (default), url, id
+        /// Action: open (default), detail, url, id
         #[arg(long, default_value = "open")]
         action: String,
     },
