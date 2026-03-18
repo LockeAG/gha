@@ -209,12 +209,21 @@ async fn resolve_repos(
     client: &GithubClient,
 ) -> Result<(Vec<String>, Vec<String>, Vec<RepoInfo>)> {
     let explicit_repos: Vec<String> = settings.repos.clone();
-    let mut all_org_repos: Vec<RepoInfo> = Vec::new();
 
-    for org in &settings.orgs {
-        match client.fetch_org_repos(org).await {
+    // Fetch all orgs concurrently
+    let org_futures: Vec<_> = settings
+        .orgs
+        .iter()
+        .map(|org| client.fetch_org_repos(org))
+        .collect();
+
+    let org_results = futures::future::join_all(org_futures).await;
+
+    let mut all_org_repos: Vec<RepoInfo> = Vec::new();
+    for (i, result) in org_results.into_iter().enumerate() {
+        match result {
             Ok(repos) => all_org_repos.extend(repos),
-            Err(e) => bail!("Failed to fetch repos for org '{org}': {e}"),
+            Err(e) => bail!("Failed to fetch repos for org '{}': {e}", settings.orgs[i]),
         }
     }
 
@@ -294,8 +303,16 @@ async fn main() -> Result<()> {
         Some(Command::Init) => unreachable!(),
         None => {
             let interval = settings.interval.max(10);
+
+            if !settings.orgs.is_empty() {
+                eprint!("\x1b[90m\u{28CB} Fetching repos...\x1b[0m");
+            }
+
             let (watched, explicit_repos, all_org_repos) =
                 resolve_repos(&settings, &client).await?;
+
+            // Clear the loading message before entering TUI
+            eprint!("\r\x1b[K");
 
             install_panic_hook();
 
