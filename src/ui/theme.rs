@@ -11,7 +11,10 @@ pub fn init(name: &str) {
         "tokyo-night" | "tn" => tokyo_night(),
         "tokyo-night-storm" | "tns" => tokyo_night_storm(),
         "catppuccin-mocha" | "mocha" => catppuccin_mocha(),
-        _ => catppuccin_mocha(),
+        _ => {
+            eprintln!("gha: unknown theme '{name}', falling back to catppuccin-mocha");
+            catppuccin_mocha()
+        }
     };
     THEME.set(t).ok();
 }
@@ -119,6 +122,33 @@ pub fn status_icon(
             ("\u{25F7}", th.queued)
         }
         RunStatus::Unknown => ("?", th.dim_fg),
+    }
+}
+
+pub fn format_duration(
+    started: Option<chrono::DateTime<chrono::Utc>>,
+    completed: Option<chrono::DateTime<chrono::Utc>>,
+) -> String {
+    match (started, completed) {
+        (Some(start), Some(end)) => {
+            let secs = (end - start).num_seconds().max(0);
+            if secs < 60 {
+                format!("{secs}s")
+            } else if secs < 3600 {
+                format!("{}m {}s", secs / 60, secs % 60)
+            } else {
+                format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+            }
+        }
+        (Some(start), None) => {
+            let secs = (chrono::Utc::now() - start).num_seconds().max(0);
+            if secs < 60 {
+                format!("{secs}s...")
+            } else {
+                format!("{}m...", secs / 60)
+            }
+        }
+        _ => "\u{2014}".to_string(),
     }
 }
 

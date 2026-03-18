@@ -61,19 +61,57 @@ impl GithubClient {
     }
 
     pub async fn fetch_org_repos(&self, owner: &str) -> Result<Vec<RepoInfo>> {
-        // Try org endpoint first, fall back to user endpoint
-        let org_url = format!("https://api.github.com/orgs/{owner}/repos?per_page=100&sort=pushed");
-        let resp = self.client.get(&org_url).send().await?;
+        let mut all_repos = Vec::new();
+        let mut page = 1u32;
 
-        if resp.status().is_success() {
-            let repos: Vec<RepoInfo> = resp.json().await?;
-            return Ok(repos);
+        loop {
+            let org_url = format!(
+                "https://api.github.com/orgs/{owner}/repos?per_page=100&sort=pushed&page={page}"
+            );
+            let resp = self.client.get(&org_url).send().await?;
+
+            if resp.status().is_success() {
+                let repos: Vec<RepoInfo> = resp.json().await?;
+                let count = repos.len();
+                all_repos.extend(repos);
+                if count < 100 || page >= 3 {
+                    break;
+                }
+                page += 1;
+                continue;
+            }
+
+            if page == 1 {
+                // Try user endpoint as fallback
+                let user_url = format!(
+                    "https://api.github.com/users/{owner}/repos?per_page=100&sort=pushed&page=1"
+                );
+                let resp = self.client.get(&user_url).send().await?;
+                if resp.status().is_success() {
+                    let repos: Vec<RepoInfo> = resp.json().await?;
+                    let count = repos.len();
+                    all_repos.extend(repos);
+                    if count < 100 {
+                        break;
+                    }
+                    // Fetch page 2 for users too
+                    let user_url2 = format!(
+                        "https://api.github.com/users/{owner}/repos?per_page=100&sort=pushed&page=2"
+                    );
+                    let resp2 = self.client.get(&user_url2).send().await?;
+                    if resp2.status().is_success() {
+                        let repos2: Vec<RepoInfo> = resp2.json().await?;
+                        all_repos.extend(repos2);
+                    }
+                } else {
+                    let status = resp.status();
+                    anyhow::bail!("Failed to fetch repos for '{owner}': HTTP {status}");
+                }
+            }
+            break;
         }
 
-        let user_url = format!("https://api.github.com/users/{owner}/repos?per_page=100&sort=pushed");
-        let resp = self.client.get(&user_url).send().await?;
-        let repos: Vec<RepoInfo> = resp.error_for_status()?.json().await?;
-        Ok(repos)
+        Ok(all_repos)
     }
 
     pub async fn fetch_jobs(&self, repo: &str, run_id: u64) -> Result<(JobsResponse, RateLimit)> {

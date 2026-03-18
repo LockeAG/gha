@@ -79,7 +79,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         spans.push(Span::styled("/", Style::default().fg(th.running)));
         spans.push(Span::styled(app.search_query.as_str(), Style::default().fg(th.header_fg)));
         if app.input_mode == InputMode::Search {
-            spans.push(Span::styled("\u{258E}", Style::default().fg(th.running)));
+            let cursor_color = if app.search_query.len() >= 64 {
+                th.error
+            } else {
+                th.running
+            };
+            spans.push(Span::styled("\u{258E}", Style::default().fg(cursor_color)));
         }
     }
 

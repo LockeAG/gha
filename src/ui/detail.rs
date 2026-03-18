@@ -80,7 +80,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let mut rows = Vec::new();
     for (job_i, job) in app.jobs.iter().enumerate() {
         let (icon, color) = theme::status_icon(job.status, job.conclusion, app.spinner_frame);
-        let duration = format_duration(job.started_at, job.completed_at);
+        let duration = theme::format_duration(job.started_at, job.completed_at);
         let job_bg = if job_i % 2 == 0 { th.bg } else { th.alt_row_bg };
 
         rows.push(
@@ -97,7 +97,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             for (si, step) in steps.iter().enumerate() {
                 let (s_icon, s_color) =
                     theme::status_icon(step.status, step.conclusion, app.spinner_frame);
-                let s_duration = format_duration(step.started_at, step.completed_at);
+                let s_duration = theme::format_duration(step.started_at, step.completed_at);
                 let tree_char = if si == step_count - 1 { "\u{2514}\u{2500}" } else { "\u{251C}\u{2500}" };
 
                 rows.push(
@@ -128,24 +128,4 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         );
 
     frame.render_stateful_widget(table, chunks[1], &mut app.detail_state);
-}
-
-fn format_duration(
-    started: Option<chrono::DateTime<chrono::Utc>>,
-    completed: Option<chrono::DateTime<chrono::Utc>>,
-) -> String {
-    match (started, completed) {
-        (Some(start), Some(end)) => {
-            let secs = (end - start).num_seconds().max(0);
-            if secs < 60 { format!("{secs}s") }
-            else if secs < 3600 { format!("{}m {}s", secs / 60, secs % 60) }
-            else { format!("{}h {}m", secs / 3600, (secs % 3600) / 60) }
-        }
-        (Some(start), None) => {
-            let secs = (chrono::Utc::now() - start).num_seconds().max(0);
-            if secs < 60 { format!("{secs}s...") }
-            else { format!("{}m {}s...", secs / 60, secs % 60) }
-        }
-        _ => "\u{2014}".to_string(),
-    }
 }

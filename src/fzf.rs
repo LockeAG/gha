@@ -7,6 +7,15 @@ use crate::github::GithubClient;
 use crate::models::{Conclusion, RepoInfo, RunStatus, WorkflowRun};
 use crate::ui::theme;
 
+// Run line tab fields (0-indexed): icon+repo | workflow | branch | age | #num | URL | index
+mod fields {
+    pub const RUN_NUM: usize = 4;
+    pub const URL: usize = 5;
+    pub const INDEX: usize = 6;
+    // Detail line tab fields: tree+icon | name | duration | URL
+    pub const DETAIL_URL: usize = 3;
+}
+
 // ANSI helpers
 const RESET: &str = "\x1b[0m";
 const DIM: &str = "\x1b[90m";
@@ -51,8 +60,8 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
                 Ok(s) => s,
                 Err(_) => return Ok(()), // Esc at run list = exit
             };
-            // Index is the last tab field (field 6, 0-indexed)
-            let run_idx = extract_field(&selection, 6)
+            // Index is the last tab field
+            let run_idx = extract_field(&selection, fields::INDEX)
                 .and_then(|s| s.trim().parse::<usize>().ok());
             if let Some(run) = run_idx.and_then(|i| all_runs.get(i)) {
                 match show_detail(client, run).await {
@@ -68,17 +77,17 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
 
     match action {
         "url" => {
-            if let Some(url) = extract_field(&selection, 5) {
+            if let Some(url) = extract_field(&selection, fields::URL) {
                 println!("{}", url.trim());
             }
         }
         "id" => {
-            if let Some(num) = extract_field(&selection, 4) {
+            if let Some(num) = extract_field(&selection, fields::RUN_NUM) {
                 println!("{}", strip_ansi(&num).trim().trim_start_matches('#'));
             }
         }
         _ => {
-            if let Some(url) = extract_field(&selection, 5) {
+            if let Some(url) = extract_field(&selection, fields::URL) {
                 open::that(url.trim())?;
             }
         }
@@ -100,7 +109,7 @@ async fn show_detail(client: &GithubClient, run: &WorkflowRun) -> Result<()> {
     let mut lines = Vec::new();
     for job in &jobs_resp.jobs {
         let icon = status_ansi(job.status, job.conclusion);
-        let dur = format_duration(job.started_at, job.completed_at);
+        let dur = theme::format_duration(job.started_at, job.completed_at);
         let jname = truncate(&job.name, 38);
         lines.push(format!(
             " {icon}{TAB}{BOLD}{WHITE}{jname}{RESET}{TAB}{DIM}{dur:>8}{RESET}{TAB}{url}",
@@ -111,7 +120,7 @@ async fn show_detail(client: &GithubClient, run: &WorkflowRun) -> Result<()> {
             let count = steps.len();
             for (si, step) in steps.iter().enumerate() {
                 let s_icon = status_ansi(step.status, step.conclusion);
-                let s_dur = format_duration(step.started_at, step.completed_at);
+                let s_dur = theme::format_duration(step.started_at, step.completed_at);
                 let tree = if si == count - 1 {
                     "\u{2514}\u{2500}"
                 } else {
@@ -138,14 +147,14 @@ async fn show_detail(client: &GithubClient, run: &WorkflowRun) -> Result<()> {
 
     let selection = run_fzf_tabbed(&lines, &header, 3)?;
 
-    if let Some(url) = extract_field(&selection, 3) {
+    if let Some(url) = extract_field(&selection, fields::DETAIL_URL) {
         open::that(url.trim())?;
     }
 
     Ok(())
 }
 
-pub async fn pick_repo(client: &GithubClient, orgs: &[String], action: &str) -> Result<()> {
+pub async fn pick_repo(client: &GithubClient, orgs: &[String], _action: &str) -> Result<()> {
     if orgs.is_empty() {
         bail!("No orgs specified. Use --org.");
     }
@@ -228,7 +237,14 @@ fn format_run_line(idx: usize, run: &WorkflowRun) -> String {
 fn run_fzf_tabbed(lines: &[String], header: &str, hide_from: usize) -> Result<String> {
     let input = lines.join("\n");
 
-    let tmp = std::env::temp_dir().join(format!("gha-fzf-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!(
+        "gha-fzf-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
     fs::write(&tmp, &input)?;
     let input_file = fs::File::open(&tmp)?;
 
@@ -300,33 +316,6 @@ fn status_ansi(status: RunStatus, conclusion: Option<Conclusion>) -> &'static st
             "\x1b[34m\u{25CB}\x1b[0m"
         }
         RunStatus::Unknown => "\x1b[90m?\x1b[0m",
-    }
-}
-
-fn format_duration(
-    started: Option<chrono::DateTime<chrono::Utc>>,
-    completed: Option<chrono::DateTime<chrono::Utc>>,
-) -> String {
-    match (started, completed) {
-        (Some(start), Some(end)) => {
-            let secs = (end - start).num_seconds().max(0);
-            if secs < 60 {
-                format!("{secs}s")
-            } else if secs < 3600 {
-                format!("{}m {}s", secs / 60, secs % 60)
-            } else {
-                format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
-            }
-        }
-        (Some(start), None) => {
-            let secs = (chrono::Utc::now() - start).num_seconds().max(0);
-            if secs < 60 {
-                format!("{secs}s...")
-            } else {
-                format!("{}m...", secs / 60)
-            }
-        }
-        _ => "\u{2014}".to_string(),
     }
 }
 

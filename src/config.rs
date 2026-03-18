@@ -15,13 +15,33 @@ pub struct Config {
     pub repos: Vec<String>,
 }
 
+const KNOWN_THEMES: &[&str] = &[
+    "catppuccin-mocha", "mocha",
+    "tokyo-night", "tn",
+    "tokyo-night-storm", "tns",
+];
+
 impl Config {
     pub fn load() -> Self {
         let path = config_path();
-        match fs::read_to_string(&path) {
-            Ok(content) => toml::from_str(&content).unwrap_or_default(),
+        let cfg = match fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<Config>(&content) {
+                Ok(c) => c,
+                Err(_) => {
+                    eprintln!("gha: config parse error, using defaults");
+                    Self::default()
+                }
+            },
             Err(_) => Self::default(),
+        };
+
+        if let Some(ref name) = cfg.theme {
+            if !KNOWN_THEMES.contains(&name.as_str()) {
+                eprintln!("gha: unknown theme '{name}', using catppuccin-mocha");
+            }
         }
+
+        cfg
     }
 }
 
