@@ -12,14 +12,9 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
         bail!("No repos to search.");
     }
 
-    let mut all_runs = Vec::new();
-    for repo in repos {
-        match client.fetch_runs(repo).await {
-            Ok((resp, _)) => all_runs.extend(resp.workflow_runs),
-            Err(_) => {}
-        }
-    }
-    all_runs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    eprint!("\x1b[90mFetching {} repo{}...\x1b[0m\r", repos.len(), if repos.len() == 1 { "" } else { "s" });
+
+    let all_runs = fetch_all_runs(client, repos).await;
 
     if all_runs.is_empty() {
         bail!("No workflow runs found.");
@@ -72,6 +67,7 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
 }
 
 async fn show_detail(client: &GithubClient, run: &WorkflowRun) -> Result<()> {
+    eprint!("\x1b[90mLoading jobs...\x1b[0m\r");
     let repo = &run.repository.full_name;
     let (jobs_resp, _) = client.fetch_jobs(repo, run.id).await?;
 
@@ -250,6 +246,24 @@ fn run_fzf_with_header(lines: &[String], header: &str) -> Result<String> {
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+async fn fetch_all_runs(client: &GithubClient, repos: &[String]) -> Vec<WorkflowRun> {
+    let futures: Vec<_> = repos
+        .iter()
+        .map(|repo| client.fetch_runs(repo))
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+
+    let mut all_runs: Vec<WorkflowRun> = results
+        .into_iter()
+        .filter_map(|r| r.ok())
+        .flat_map(|(resp, _)| resp.workflow_runs)
+        .collect();
+
+    all_runs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    all_runs
 }
 
 fn status_ansi(status: RunStatus, conclusion: Option<Conclusion>) -> &'static str {
