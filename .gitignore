@@ -1,0 +1,9 @@
+CLAUDE.md
+*.claude.md
+.claude/
+.ai/
+.env*
+*.pem
+*.key
+.DS_Store
+/target

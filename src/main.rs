@@ -1,0 +1,287 @@
+use std::io;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{bail, Context, Result};
+use clap::Parser;
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
+use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
+use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
+use tokio::sync::mpsc;
+
+mod app;
+mod events;
+mod github;
+mod models;
+mod ui;
+
+use app::{App, AppAction};
+use events::AppEvent;
+use github::GithubClient;
+
+#[derive(Parser)]
+#[command(name = "gha", about = "GitHub Actions TUI tracker")]
+struct Cli {
+    #[arg(long, help = "Watch all repos in an org (repeatable)")]
+    org: Vec<String>,
+
+    #[arg(long, help = "Watch specific repo owner/name (repeatable)")]
+    repo: Vec<String>,
+
+    #[arg(long, default_value = "30", help = "Poll interval in seconds (min 10)")]
+    interval: u64,
+
+    #[arg(long, default_value = "20", help = "Max runs per repo")]
+    per_page: u8,
+
+    #[arg(long, help = "GitHub token (or GH_TOKEN/GITHUB_TOKEN env, or gh auth token)")]
+    token: Option<String>,
+}
+
+fn resolve_token(cli_token: Option<String>) -> Result<String> {
+    if let Some(t) = cli_token {
+        return Ok(t);
+    }
+    if let Ok(t) = std::env::var("GH_TOKEN") {
+        return Ok(t);
+    }
+    if let Ok(t) = std::env::var("GITHUB_TOKEN") {
+        return Ok(t);
+    }
+    let output = std::process::Command::new("gh")
+        .args(["auth", "token"])
+        .output()
+        .context("Failed to run 'gh auth token'. Install gh CLI or set GH_TOKEN.")?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        bail!("No GitHub token found. Set GH_TOKEN, GITHUB_TOKEN, use --token, or authenticate with gh CLI.")
+    }
+}
+
+fn resolve_repo_from_git() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    parse_repo_from_url(&url)
+}
+
+fn parse_repo_from_url(url: &str) -> Option<String> {
+    let cleaned = url.trim_end_matches(".git");
+    // HTTPS: https://github.com/owner/repo
+    if let Some(path) = cleaned.strip_prefix("https://github.com/") {
+        let parts: Vec<&str> = path.splitn(3, '/').collect();
+        if parts.len() >= 2 {
+            return Some(format!("{}/{}", parts[0], parts[1]));
+        }
+    }
+    // SSH: git@github.com:owner/repo
+    if let Some(path) = cleaned.strip_prefix("git@github.com:") {
+        let parts: Vec<&str> = path.splitn(3, '/').collect();
+        if parts.len() >= 2 {
+            return Some(format!("{}/{}", parts[0], parts[1]));
+        }
+    }
+    None
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let interval = cli.interval.max(10);
+
+    let token = resolve_token(cli.token)?;
+    let client = GithubClient::new(&token, cli.per_page)?;
+
+    let mut repos: Vec<String> = cli.repo;
+
+    for org in &cli.org {
+        match client.fetch_org_repos(org).await {
+            Ok(org_repos) => repos.extend(org_repos),
+            Err(e) => bail!("Failed to fetch repos for org '{org}': {e}"),
+        }
+    }
+
+    if repos.is_empty() {
+        if let Some(repo) = resolve_repo_from_git() {
+            repos.push(repo);
+        } else {
+            bail!("No repos specified. Use --repo, --org, or run from a git repo.");
+        }
+    }
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let result = run_app(&mut terminal, repos, client, interval).await;
+
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+
+    result
+}
+
+async fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    repos: Vec<String>,
+    client: GithubClient,
+    interval: u64,
+) -> Result<()> {
+    let (tx, mut rx) = mpsc::channel::<AppEvent>(100);
+    let mut app = App::new(repos.clone(), interval);
+    let client = Arc::new(client);
+
+    // Input task
+    let tx_input = tx.clone();
+    tokio::task::spawn_blocking(move || loop {
+        if event::poll(Duration::from_millis(50)).unwrap_or(false) {
+            if let Ok(Event::Key(key)) = event::read() {
+                if key.kind == KeyEventKind::Press
+                    && tx_input.blocking_send(AppEvent::Key(key)).is_err()
+                {
+                    break;
+                }
+            }
+        }
+    });
+
+    // Tick task
+    let tx_tick = tx.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        loop {
+            tick.tick().await;
+            if tx_tick.send(AppEvent::Tick).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Poller task
+    let tx_poll = tx.clone();
+    let client_poll = client.clone();
+    let repos_poll = repos.clone();
+    tokio::spawn(async move {
+        let mut poll_dur = Duration::from_secs(interval);
+        loop {
+            let mut all_runs = Vec::new();
+            let mut last_rl = None;
+
+            for repo in &repos_poll {
+                match client_poll.fetch_runs(repo).await {
+                    Ok((resp, rl)) => {
+                        all_runs.extend(resp.workflow_runs);
+                        last_rl = Some(rl);
+                    }
+                    Err(e) => {
+                        let _ = tx_poll
+                            .send(AppEvent::ApiError(format!("{repo}: {e}")))
+                            .await;
+                    }
+                }
+            }
+
+            if let Some(rl) = last_rl {
+                if rl.remaining < 100 {
+                    poll_dur = Duration::from_secs(interval.max(60));
+                } else {
+                    poll_dur = Duration::from_secs(interval);
+                }
+                let _ = tx_poll.send(AppEvent::RunsUpdated(all_runs, rl)).await;
+            }
+
+            tokio::time::sleep(poll_dur).await;
+        }
+    });
+
+    loop {
+        terminal.draw(|frame| ui::render(frame, &mut app))?;
+
+        if let Some(ev) = rx.recv().await {
+            match ev {
+                AppEvent::Key(key) => {
+                    if let Some(action) = app.handle_key(key) {
+                        handle_action(action, &client, &tx, &repos, &mut app).await;
+                    }
+                }
+                AppEvent::Tick => app.on_tick(),
+                AppEvent::RunsUpdated(runs, rl) => app.update_runs(runs, rl),
+                AppEvent::JobsUpdated(run_id, jobs) => app.update_jobs(run_id, jobs),
+                AppEvent::ApiError(err) => app.error = Some(err),
+            }
+        }
+
+        if app.should_quit {
+            return Ok(());
+        }
+    }
+}
+
+async fn handle_action(
+    action: AppAction,
+    client: &Arc<GithubClient>,
+    tx: &mpsc::Sender<AppEvent>,
+    repos: &[String],
+    app: &mut App,
+) {
+    match action {
+        AppAction::ForceRefresh => {
+            app.loading = true;
+            let c = client.clone();
+            let t = tx.clone();
+            let r = repos.to_vec();
+            tokio::spawn(async move {
+                let mut all_runs = Vec::new();
+                let mut last_rl = None;
+                for repo in &r {
+                    match c.fetch_runs(repo).await {
+                        Ok((resp, rl)) => {
+                            all_runs.extend(resp.workflow_runs);
+                            last_rl = Some(rl);
+                        }
+                        Err(e) => {
+                            let _ = t.send(AppEvent::ApiError(format!("{repo}: {e}"))).await;
+                        }
+                    }
+                }
+                if let Some(rl) = last_rl {
+                    let _ = t.send(AppEvent::RunsUpdated(all_runs, rl)).await;
+                }
+            });
+        }
+        AppAction::FetchJobs(repo, run_id) => {
+            let c = client.clone();
+            let t = tx.clone();
+            tokio::spawn(async move {
+                match c.fetch_jobs(&repo, run_id).await {
+                    Ok((resp, _rl)) => {
+                        let _ = t.send(AppEvent::JobsUpdated(run_id, resp.jobs)).await;
+                    }
+                    Err(e) => {
+                        let _ = t.send(AppEvent::ApiError(format!("jobs: {e}"))).await;
+                    }
+                }
+            });
+        }
+        AppAction::OpenUrl(url) => {
+            let _ = open::that(&url);
+        }
+    }
+}
