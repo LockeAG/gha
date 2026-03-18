@@ -267,13 +267,27 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Some(Command::Fzf { mode }) => {
-            let (watched, _, _) = resolve_repos(&settings, &client).await?;
-            match mode {
-                FzfMode::Runs { action } => {
-                    fzf::pick_run(&client, &watched, action).await?;
+            let result = async {
+                let (watched, _, _) = resolve_repos(&settings, &client).await?;
+                match mode {
+                    FzfMode::Runs { action } => {
+                        fzf::pick_run(&client, &watched, action).await
+                    }
+                    FzfMode::Repos { action } => {
+                        fzf::pick_repo(&client, &settings.orgs, action).await
+                    }
                 }
-                FzfMode::Repos { action } => {
-                    fzf::pick_repo(&client, &settings.orgs, action).await?;
+            }
+            .await;
+
+            if let Err(e) = result {
+                let msg = e.to_string();
+                // "fzf cancelled" is normal (user pressed Esc), exit silently
+                if msg != "fzf cancelled" {
+                    eprintln!("gha: {msg}");
+                    // Pause so tmux popup doesn't close before you can read
+                    eprintln!("\nPress Enter to close...");
+                    let _ = std::io::stdin().read_line(&mut String::new());
                 }
             }
         }

@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::fs;
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Result};
@@ -213,7 +213,14 @@ fn run_fzf(lines: &[String], label: &str) -> Result<String> {
 fn run_fzf_with_header(lines: &[String], header: &str) -> Result<String> {
     let input = lines.join("\n");
 
-    let mut child = Command::new("fzf")
+    // Write to temp file so fzf's stdin stays on /dev/tty for keyboard input.
+    // Piping stdin directly breaks fzf in tmux popups.
+    let tmp = std::env::temp_dir().join(format!("gha-fzf-{}", std::process::id()));
+    fs::write(&tmp, &input)?;
+
+    let input_file = fs::File::open(&tmp)?;
+
+    let child = Command::new("fzf")
         .args([
             "--ansi",
             "--no-sort",
@@ -222,11 +229,12 @@ fn run_fzf_with_header(lines: &[String], header: &str) -> Result<String> {
             &format!("--header={header}"),
             &format!("--color={}", theme::t().fzf_colors),
         ])
-        .stdin(Stdio::piped())
+        .stdin(input_file)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|e| {
+            let _ = fs::remove_file(&tmp);
             if e.kind() == std::io::ErrorKind::NotFound {
                 anyhow::anyhow!("fzf not found. Install fzf: https://github.com/junegunn/fzf")
             } else {
@@ -234,11 +242,8 @@ fn run_fzf_with_header(lines: &[String], header: &str) -> Result<String> {
             }
         })?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input.as_bytes())?;
-    }
-
     let output = child.wait_with_output()?;
+    let _ = fs::remove_file(&tmp);
 
     if !output.status.success() {
         bail!("fzf cancelled");
