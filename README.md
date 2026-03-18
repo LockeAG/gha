@@ -164,6 +164,20 @@ API poller ────────┘         ↑
 
 Rust + [ratatui](https://ratatui.rs) + crossterm + tokio + reqwest (rustls). Single binary, no OpenSSL dependency. ~3.4MB.
 
+## API usage and rate limits
+
+`gha` uses the GitHub REST API with your own authenticated token. It only performs read operations (workflow runs, jobs, org repos). No data is cached, stored, or transmitted beyond your local machine.
+
+**Rate budget:** GitHub allows 5000 requests/hour for authenticated users. Default settings (30s interval, 7-day activity filter) use ~2 req/min per repo. Safe for up to ~40 active repos.
+
+**Built-in safeguards:**
+- `--days 7` (default) filters org repos to recently active only, skipping dormant repos
+- Auto-downgrades poll interval to 60s when remaining API calls drop below 100
+- Jobs are fetched on-demand (Enter key), never polled
+- `--interval` enforces a minimum of 10 seconds
+
+This is the same access pattern as the `gh` CLI and other GitHub API clients. No GitHub terms are violated. If you want to verify: [GitHub API Terms](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#h-api-terms).
+
 ## Roadmap
 
 - [x] Live TUI dashboard with polling
