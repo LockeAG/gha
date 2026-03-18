@@ -2,26 +2,28 @@
 
 A live GitHub Actions dashboard for the terminal. Never leave your shell to check CI status.
 
-> **Alpha** -- functional, polished, hardened. Not yet 1.0.
+## Install
+
+### Homebrew (macOS / Linux)
+
+```sh
+brew tap LockeAG/tap
+brew install gha
+```
+
+### Cargo (from source)
+
+```sh
+cargo install --git https://github.com/LockeAG/gha
+```
+
+### Prebuilt binaries
+
+Download from [Releases](https://github.com/LockeAG/gha/releases) for macOS (arm64/x86_64) and Linux (x86_64/arm64).
 
 ## Why
 
 Context switching kills flow. Opening a browser tab to check if CI passed is a small interruption that adds up across dozens of pushes a day. `gha` keeps that information where you already are: the terminal.
-
-## Install
-
-Requires Rust 1.74+ and a GitHub token (via `gh` CLI or environment variable).
-
-```sh
-cargo install --path .
-```
-
-Or build manually:
-
-```sh
-cargo build --release
-# Binary at ./target/release/gha (~3.4MB, no OpenSSL)
-```
 
 ## Usage
 
@@ -41,8 +43,8 @@ gha --interval 15
 # Control activity window (default: 7 days, 0 = all repos)
 gha --org MyOrg --days 14
 
-# Explicit token
-gha --token ghp_xxx
+# Color theme
+gha --theme tokyo-night
 ```
 
 ### Smart repo filtering
@@ -58,6 +60,16 @@ Checked in order:
 2. `GH_TOKEN` env
 3. `GITHUB_TOKEN` env
 4. `gh auth token` (GitHub CLI)
+
+### Themes
+
+Three built-in themes via `--theme`:
+
+| Flag | Alias |
+|------|-------|
+| `catppuccin-mocha` (default) | `mocha` |
+| `tokyo-night` | `tn` |
+| `tokyo-night-storm` | `tns` |
 
 ## Key bindings
 
@@ -99,38 +111,36 @@ Checked in order:
 
 `gha fzf` provides composable pickers powered by fzf. Designed for tmux popup workflows.
 
-### Pick a run (opens in browser)
-
 ```sh
-gha fzf runs --org DreamsEngine
+# Pick a run and open in browser
+gha fzf runs --org MyOrg
+
+# Pick a run, drill into job/step detail, then open
+gha fzf runs --org MyOrg --action detail
+
+# Output URL for piping
+gha fzf runs --org MyOrg --action url
+
+# Pick a repo
+gha fzf repos --org MyOrg
 ```
 
-### Pick a run (output URL for piping)
-
-```sh
-gha fzf runs --org DreamsEngine --action url
-```
-
-### Pick a repo
-
-```sh
-gha fzf repos --org DreamsEngine
-```
+In detail mode, Esc goes back to the run list.
 
 ### tmux keybindings
 
 Add to `.tmux.conf`:
 
 ```sh
-# Prefix + g: pick a run and open in browser
-bind-key g display-popup -E -w 80% -h 60% "gha fzf runs --org DreamsEngine"
+# Prefix + g: pick a run with detail drill-down
+bind-key g display-popup -E -w 80% -h 60% "gha fzf runs --org MyOrg --action detail"
 
-# Prefix + G: pick a repo, then open its runs
+# Prefix + G: pick a repo, then browse its runs
 bind-key G display-popup -E -w 80% -h 60% \
-  "gha fzf repos --org DreamsEngine | xargs -I{} gha fzf runs --repo {}"
+  "gha fzf repos --org MyOrg | xargs -I{} gha fzf runs --repo {} --action detail"
 ```
 
-The fzf picker uses Catppuccin Mocha colors to match the TUI. Requires `fzf` installed.
+Requires `fzf` installed. Colors match the selected `--theme`.
 
 ## Architecture
 
@@ -152,18 +162,20 @@ API poller ────────┘         ↑
 
 ## Stack
 
-Rust + [ratatui](https://ratatui.rs) + crossterm + tokio + reqwest (rustls). Single binary, no OpenSSL dependency. Catppuccin Mocha color scheme.
+Rust + [ratatui](https://ratatui.rs) + crossterm + tokio + reqwest (rustls). Single binary, no OpenSSL dependency. ~3.4MB.
 
 ## Roadmap
 
+- [x] Live TUI dashboard with polling
 - [x] Smart repo filtering (activity-based, `--days`)
 - [x] Repo picker (toggle org repos at runtime)
-- [x] Panic-safe terminal restore
-- [x] Detail view with run context + tree-drawn job/step hierarchy
-- [x] fzf picker for tmux popups (`gha fzf runs`, `gha fzf repos`)
+- [x] Detail view with tree-drawn job/step hierarchy
+- [x] fzf integration for tmux popups with detail drill-down
+- [x] Themes (Catppuccin Mocha, Tokyo Night, Tokyo Night Storm)
+- [x] Homebrew tap (`brew install LockeAG/tap/gha`)
+- [x] Prebuilt binaries (macOS arm64/x86_64, Linux x86_64/arm64)
 - [ ] Workflow re-run from TUI
 - [ ] Log streaming for in-progress steps
-- [ ] Configurable color themes
 - [ ] `~/.config/gha/config.toml` for default orgs/repos
 
 ## License
