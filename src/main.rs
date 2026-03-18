@@ -360,6 +360,7 @@ async fn run_app(
     let client = Arc::new(client);
 
     let (repos_tx, repos_rx) = watch::channel(watched);
+    let (active_tx, active_rx) = watch::channel(false);
 
     let tx_input = tx.clone();
     tokio::task::spawn_blocking(move || loop {
@@ -387,8 +388,8 @@ async fn run_app(
 
     let tx_poll = tx.clone();
     let client_poll = client.clone();
+    let fast_interval = 5u64; // seconds when runs are in-progress
     tokio::spawn(async move {
-        let mut poll_dur = Duration::from_secs(interval);
         loop {
             let current_repos = repos_rx.borrow().clone();
             let mut all_runs = Vec::new();
@@ -411,17 +412,21 @@ async fn run_app(
             }
 
             if let Some(rl) = last_rl {
-                if rl.remaining < 100 {
-                    poll_dur = Duration::from_secs(interval.max(60));
+                let poll_dur = if rl.remaining < 100 {
+                    Duration::from_secs(interval.max(60))
+                } else if *active_rx.borrow() {
+                    Duration::from_secs(fast_interval)
                 } else {
-                    poll_dur = Duration::from_secs(interval);
-                }
+                    Duration::from_secs(interval)
+                };
                 let _ = tx_poll.send(AppEvent::RunsUpdated(all_runs, rl)).await;
+                tokio::time::sleep(poll_dur).await;
             } else if had_error {
                 let _ = tx_poll.send(AppEvent::LoadingDone).await;
+                tokio::time::sleep(Duration::from_secs(interval)).await;
+            } else {
+                tokio::time::sleep(Duration::from_secs(interval)).await;
             }
-
-            tokio::time::sleep(poll_dur).await;
         }
     });
 
@@ -436,7 +441,10 @@ async fn run_app(
                     }
                 }
                 AppEvent::Tick => app.on_tick(),
-                AppEvent::RunsUpdated(runs, rl) => app.update_runs(runs, rl),
+                AppEvent::RunsUpdated(runs, rl) => {
+                    app.update_runs(runs, rl);
+                    let _ = active_tx.send(app.has_in_progress);
+                }
                 AppEvent::JobsUpdated(run_id, jobs) => app.update_jobs(run_id, jobs),
                 AppEvent::ApiError(err) => app.set_error(err),
                 AppEvent::LoadingDone => app.mark_loading_done(),
