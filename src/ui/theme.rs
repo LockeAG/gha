@@ -2,17 +2,22 @@ use ratatui::style::Color;
 
 use crate::models::{Conclusion, RunStatus};
 
+// Catppuccin Mocha base
+pub const BG_COLOR: Color = Color::Rgb(30, 30, 46);
+pub const ALT_ROW_BG: Color = Color::Rgb(49, 50, 68);
+pub const SURFACE_BG: Color = Color::Rgb(36, 39, 58);
+
 pub const HEADER_FG: Color = Color::Rgb(205, 214, 244);
 pub const SELECTED_BG: Color = Color::Rgb(69, 71, 90);
 pub const BORDER_COLOR: Color = Color::Rgb(88, 91, 112);
-pub const DIM_FG: Color = Color::Rgb(127, 132, 156);
-pub const ERROR_FG: Color = Color::Red;
+pub const DIM_FG: Color = Color::Rgb(147, 153, 178);
+pub const ERROR_FG: Color = Color::Rgb(243, 139, 168);
 
 pub const SUCCESS_COLOR: Color = Color::Rgb(166, 227, 161);
 pub const FAILURE_COLOR: Color = Color::Rgb(243, 139, 168);
 pub const RUNNING_COLOR: Color = Color::Rgb(249, 226, 175);
 pub const QUEUED_COLOR: Color = Color::Rgb(137, 180, 250);
-pub const CANCELLED_COLOR: Color = Color::Rgb(127, 132, 156);
+pub const CANCELLED_COLOR: Color = Color::Rgb(147, 153, 178);
 
 pub const SPINNER_FRAMES: &[&str] = &[
     "\u{28CB}", "\u{2899}", "\u{28B9}", "\u{28B8}", "\u{28BC}", "\u{28B4}", "\u{28A6}",
@@ -41,3 +46,15 @@ pub fn status_icon(
     }
 }
 
+pub fn format_relative_time(time: chrono::DateTime<chrono::Utc>) -> String {
+    let diff = chrono::Utc::now() - time;
+    if diff.num_seconds() < 60 {
+        format!("{}s", diff.num_seconds())
+    } else if diff.num_minutes() < 60 {
+        format!("{}m", diff.num_minutes())
+    } else if diff.num_hours() < 24 {
+        format!("{}h", diff.num_hours())
+    } else {
+        format!("{}d", diff.num_days())
+    }
+}

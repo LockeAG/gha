@@ -1,8 +1,12 @@
+use std::time::Instant;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::TableState;
 
 use crate::github::RateLimit;
 use crate::models::{Conclusion, Job, RunStatus, WorkflowRun};
+
+const MAX_SEARCH_LEN: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
@@ -40,14 +44,17 @@ pub struct App {
     pub rate_limit: Option<RateLimit>,
     pub last_refresh: Option<chrono::DateTime<chrono::Utc>>,
     pub error: Option<String>,
+    pub error_at: Option<Instant>,
     pub should_quit: bool,
     pub repos: Vec<String>,
     pub spinner_frame: usize,
     pub loading: bool,
+    pub has_in_progress: bool,
+    pub visible_rows: usize,
 }
 
 impl App {
-    pub fn new(repos: Vec<String>, _poll_interval: u64) -> Self {
+    pub fn new(repos: Vec<String>) -> Self {
         Self {
             runs: Vec::new(),
             filtered_runs: Vec::new(),
@@ -63,10 +70,13 @@ impl App {
             rate_limit: None,
             last_refresh: None,
             error: None,
+            error_at: None,
             should_quit: false,
             repos,
             spinner_frame: 0,
             loading: true,
+            has_in_progress: false,
+            visible_rows: 20,
         }
     }
 
@@ -100,8 +110,10 @@ impl App {
                 self.apply_filters();
             }
             KeyCode::Char(c) => {
-                self.search_query.push(c);
-                self.apply_filters();
+                if self.search_query.len() < MAX_SEARCH_LEN {
+                    self.search_query.push(c);
+                    self.apply_filters();
+                }
             }
             _ => {}
         }
@@ -141,8 +153,16 @@ impl App {
     fn handle_dashboard_key(&mut self, key: KeyEvent) -> Option<AppAction> {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('j') | KeyCode::Down => self.next_run(),
-            KeyCode::Char('k') | KeyCode::Up => self.prev_run(),
+            KeyCode::Char('j') | KeyCode::Down => self.move_selection(1),
+            KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1),
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.move_selection(self.half_page() as isize);
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.move_selection(-(self.half_page() as isize));
+            }
+            KeyCode::PageDown => self.move_selection(self.half_page() as isize),
+            KeyCode::PageUp => self.move_selection(-(self.half_page() as isize)),
             KeyCode::Char('g') => self.first_run(),
             KeyCode::Char('G') => self.last_run(),
             KeyCode::Enter => return self.enter_detail(),
@@ -178,6 +198,7 @@ impl App {
     }
 
     fn handle_detail_key(&mut self, key: KeyEvent) -> Option<AppAction> {
+        let len = self.detail_row_count();
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Esc => {
@@ -187,7 +208,6 @@ impl App {
                 self.current_run_repo = None;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                let len = self.detail_row_count();
                 if len > 0 {
                     let i = self
                         .detail_state
@@ -203,9 +223,44 @@ impl App {
                     .map_or(0, |i| i.saturating_sub(1));
                 self.detail_state.select(Some(i));
             }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if len > 0 {
+                    let jump = self.half_page();
+                    let i = self
+                        .detail_state
+                        .selected()
+                        .map_or(0, |i| (i + jump).min(len - 1));
+                    self.detail_state.select(Some(i));
+                }
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let jump = self.half_page();
+                let i = self
+                    .detail_state
+                    .selected()
+                    .map_or(0, |i| i.saturating_sub(jump));
+                self.detail_state.select(Some(i));
+            }
+            KeyCode::PageDown => {
+                if len > 0 {
+                    let jump = self.half_page();
+                    let i = self
+                        .detail_state
+                        .selected()
+                        .map_or(0, |i| (i + jump).min(len - 1));
+                    self.detail_state.select(Some(i));
+                }
+            }
+            KeyCode::PageUp => {
+                let jump = self.half_page();
+                let i = self
+                    .detail_state
+                    .selected()
+                    .map_or(0, |i| i.saturating_sub(jump));
+                self.detail_state.select(Some(i));
+            }
             KeyCode::Char('g') => self.detail_state.select(Some(0)),
             KeyCode::Char('G') => {
-                let len = self.detail_row_count();
                 if len > 0 {
                     self.detail_state.select(Some(len - 1));
                 }
@@ -216,6 +271,10 @@ impl App {
         None
     }
 
+    fn half_page(&self) -> usize {
+        (self.visible_rows / 2).max(1)
+    }
+
     fn detail_row_count(&self) -> usize {
         self.jobs
             .iter()
@@ -223,23 +282,14 @@ impl App {
             .sum()
     }
 
-    fn next_run(&mut self) {
+    fn move_selection(&mut self, delta: isize) {
         if self.filtered_runs.is_empty() {
             return;
         }
-        let i = self
-            .table_state
-            .selected()
-            .map_or(0, |i| (i + 1).min(self.filtered_runs.len() - 1));
-        self.table_state.select(Some(i));
-    }
-
-    fn prev_run(&mut self) {
-        let i = self
-            .table_state
-            .selected()
-            .map_or(0, |i| i.saturating_sub(1));
-        self.table_state.select(Some(i));
+        let max = self.filtered_runs.len() - 1;
+        let current = self.table_state.selected().unwrap_or(0) as isize;
+        let next = (current + delta).clamp(0, max as isize) as usize;
+        self.table_state.select(Some(next));
     }
 
     fn first_run(&mut self) {
@@ -287,21 +337,69 @@ impl App {
     }
 
     pub fn update_runs(&mut self, runs: Vec<WorkflowRun>, rate_limit: RateLimit) {
+        let selected_run_id = self.selected_run().map(|r| r.id);
+
         self.runs = runs;
         self.runs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         self.rate_limit = Some(rate_limit);
         self.last_refresh = Some(chrono::Utc::now());
         self.loading = false;
         self.error = None;
+        self.error_at = None;
+
+        self.has_in_progress = self.runs.iter().any(|r| {
+            matches!(
+                r.status,
+                RunStatus::InProgress | RunStatus::Queued | RunStatus::Waiting
+            )
+        });
+
         self.apply_filters();
+
+        if let Some(target_id) = selected_run_id {
+            if let Some(pos) = self
+                .filtered_runs
+                .iter()
+                .position(|&idx| self.runs[idx].id == target_id)
+            {
+                self.table_state.select(Some(pos));
+            }
+        }
     }
 
-    pub fn update_jobs(&mut self, _run_id: u64, jobs: Vec<Job>) {
-        self.jobs = jobs;
+    pub fn update_jobs(&mut self, run_id: u64, jobs: Vec<Job>) {
+        // Guard: only apply if we're still looking at this run
+        if self.current_run_id == Some(run_id) && self.view == View::Detail {
+            self.jobs = jobs;
+        }
     }
 
     pub fn on_tick(&mut self) {
-        self.spinner_frame = (self.spinner_frame + 1) % 10;
+        if self.has_in_progress || self.loading {
+            self.spinner_frame = (self.spinner_frame + 1) % 10;
+        }
+
+        if let Some(at) = self.error_at {
+            if at.elapsed().as_secs() >= 8 {
+                self.error = None;
+                self.error_at = None;
+            }
+        }
+    }
+
+    pub fn set_error(&mut self, err: String) {
+        // Truncate long error messages for header display
+        let truncated = if err.len() > 60 {
+            format!("{}...", &err[..57])
+        } else {
+            err
+        };
+        self.error = Some(truncated);
+        self.error_at = Some(Instant::now());
+    }
+
+    pub fn mark_loading_done(&mut self) {
+        self.loading = false;
     }
 
     pub fn apply_filters(&mut self) {
@@ -353,7 +451,6 @@ impl App {
             self.table_state.select(Some(0));
         }
     }
-
 }
 
 pub enum AppAction {

@@ -15,6 +15,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             Span::raw(" Fetching workflow runs..."),
         ]))
         .centered()
+        .style(Style::default().fg(theme::DIM_FG).bg(theme::BG_COLOR))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -32,7 +33,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         };
         let empty = Paragraph::new(msg)
             .centered()
-            .style(Style::default().fg(theme::DIM_FG))
+            .style(Style::default().fg(theme::DIM_FG).bg(theme::BG_COLOR))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -42,33 +43,88 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let header = Row::new(vec![
-        Cell::from(" "),
-        Cell::from("Repo"),
-        Cell::from("Workflow"),
-        Cell::from("Branch"),
-        Cell::from("Event"),
-        Cell::from("Age"),
-        Cell::from("Actor"),
-    ])
-    .style(
-        Style::default()
-            .fg(theme::DIM_FG)
-            .add_modifier(Modifier::BOLD),
-    )
-    .height(1);
+    let wide = area.width >= 100;
+    let multi_org = has_multiple_orgs(app);
+
+    let (header_cells, widths): (Vec<Cell>, Vec<Constraint>) = if wide {
+        // Wide: status, repo, workflow, branch, event, age, #
+        (
+            vec![
+                Cell::from(" "),
+                Cell::from("Repo"),
+                Cell::from("Workflow"),
+                Cell::from("Branch"),
+                Cell::from("Event"),
+                Cell::from("  Age"),
+                Cell::from("    #"),
+            ],
+            vec![
+                Constraint::Length(2),
+                Constraint::Fill(2),
+                Constraint::Fill(3),
+                Constraint::Fill(2),
+                Constraint::Length(10),
+                Constraint::Length(6),
+                Constraint::Length(6),
+            ],
+        )
+    } else {
+        // Compact: status, repo, workflow, branch, age, #
+        (
+            vec![
+                Cell::from(" "),
+                Cell::from("Repo"),
+                Cell::from("Workflow"),
+                Cell::from("Branch"),
+                Cell::from("  Age"),
+                Cell::from("    #"),
+            ],
+            vec![
+                Constraint::Length(2),
+                Constraint::Fill(2),
+                Constraint::Fill(3),
+                Constraint::Fill(2),
+                Constraint::Length(6),
+                Constraint::Length(6),
+            ],
+        )
+    };
+
+    let header = Row::new(header_cells)
+        .style(
+            Style::default()
+                .fg(theme::DIM_FG)
+                .bg(theme::BG_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )
+        .height(1);
 
     let rows: Vec<Row> = app
         .filtered_runs
         .iter()
-        .map(|&idx| {
+        .enumerate()
+        .map(|(i, &idx)| {
             let run = &app.runs[idx];
             let (icon, color) = theme::status_icon(run.status, run.conclusion, app.spinner_frame);
+            let row_bg = if i % 2 == 0 {
+                theme::BG_COLOR
+            } else {
+                theme::ALT_ROW_BG
+            };
 
-            Row::new(vec![
+            let repo_display = if multi_org {
+                run.repository.full_name.as_str()
+            } else {
+                short_repo(&run.repository.full_name)
+            };
+
+            let age = theme::format_relative_time(run.updated_at);
+            let run_num = format!("#{}", run.run_number);
+
+            let mut cells = vec![
                 Cell::from(Span::styled(icon, Style::default().fg(color))),
                 Cell::from(Span::styled(
-                    short_repo(&run.repository.full_name),
+                    repo_display,
                     Style::default().fg(theme::HEADER_FG),
                 )),
                 Cell::from(Span::styled(
@@ -79,37 +135,41 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                     run.head_branch.as_deref().unwrap_or("\u{2014}"),
                     Style::default().fg(theme::DIM_FG),
                 )),
-                Cell::from(Span::styled(
-                    run.event.as_str(),
+            ];
+
+            if wide {
+                cells.push(Cell::from(Span::styled(
+                    short_event(&run.event),
                     Style::default().fg(theme::DIM_FG),
-                )),
-                Cell::from(Span::styled(
-                    format_age(run.updated_at),
-                    Style::default().fg(theme::DIM_FG),
-                )),
-                Cell::from(Span::styled(
-                    run.actor.login.as_str(),
-                    Style::default().fg(theme::DIM_FG),
-                )),
-            ])
+                )));
+            }
+
+            cells.push(Cell::from(Span::styled(
+                format!("{age:>5}"),
+                Style::default().fg(theme::DIM_FG),
+            )));
+            cells.push(Cell::from(Span::styled(
+                format!("{run_num:>5}"),
+                Style::default().fg(theme::DIM_FG),
+            )));
+
+            Row::new(cells).style(Style::default().bg(row_bg))
         })
         .collect();
 
-    let widths = [
-        Constraint::Length(2),
-        Constraint::Percentage(20),
-        Constraint::Percentage(25),
-        Constraint::Percentage(15),
-        Constraint::Length(12),
-        Constraint::Length(10),
-        Constraint::Percentage(15),
-    ];
-
     let table = Table::new(rows, widths)
         .header(header)
-        .row_highlight_style(Style::default().bg(theme::SELECTED_BG))
+        .row_highlight_style(
+            Style::default()
+                .bg(theme::SELECTED_BG)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("\u{25B8} ")
-        .block(Block::default().borders(Borders::NONE));
+        .block(
+            Block::default()
+                .borders(Borders::NONE)
+                .style(Style::default().bg(theme::BG_COLOR)),
+        );
 
     frame.render_stateful_widget(table, area, &mut app.table_state);
 }
@@ -118,15 +178,24 @@ fn short_repo(full_name: &str) -> &str {
     full_name.split('/').last().unwrap_or(full_name)
 }
 
-fn format_age(time: chrono::DateTime<chrono::Utc>) -> String {
-    let diff = chrono::Utc::now() - time;
-    if diff.num_seconds() < 60 {
-        format!("{}s", diff.num_seconds())
-    } else if diff.num_minutes() < 60 {
-        format!("{}m", diff.num_minutes())
-    } else if diff.num_hours() < 24 {
-        format!("{}h", diff.num_hours())
-    } else {
-        format!("{}d", diff.num_days())
+fn short_event(event: &str) -> &str {
+    match event {
+        "pull_request" => "pr",
+        "pull_request_target" => "pr_target",
+        "workflow_dispatch" => "dispatch",
+        "workflow_run" => "wf_run",
+        "repository_dispatch" => "repo_disp",
+        "merge_group" => "merge",
+        other => other,
     }
+}
+
+fn has_multiple_orgs(app: &App) -> bool {
+    if app.repos.len() <= 1 {
+        return false;
+    }
+    let first_org = app.repos[0].split('/').next();
+    app.repos
+        .iter()
+        .any(|r| r.split('/').next() != first_org)
 }

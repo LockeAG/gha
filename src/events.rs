@@ -9,4 +9,5 @@ pub enum AppEvent {
     RunsUpdated(Vec<WorkflowRun>, RateLimit),
     JobsUpdated(u64, Vec<Job>),
     ApiError(String),
+    LoadingDone,
 }

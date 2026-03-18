@@ -77,14 +77,12 @@ fn resolve_repo_from_git() -> Option<String> {
 
 fn parse_repo_from_url(url: &str) -> Option<String> {
     let cleaned = url.trim_end_matches(".git");
-    // HTTPS: https://github.com/owner/repo
     if let Some(path) = cleaned.strip_prefix("https://github.com/") {
         let parts: Vec<&str> = path.splitn(3, '/').collect();
         if parts.len() >= 2 {
             return Some(format!("{}/{}", parts[0], parts[1]));
         }
     }
-    // SSH: git@github.com:owner/repo
     if let Some(path) = cleaned.strip_prefix("git@github.com:") {
         let parts: Vec<&str> = path.splitn(3, '/').collect();
         if parts.len() >= 2 {
@@ -92,6 +90,15 @@ fn parse_repo_from_url(url: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn install_panic_hook() {
+    let original = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        original(info);
+    }));
 }
 
 #[tokio::main]
@@ -119,6 +126,8 @@ async fn main() -> Result<()> {
         }
     }
 
+    install_panic_hook();
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -145,7 +154,7 @@ async fn run_app(
     interval: u64,
 ) -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<AppEvent>(100);
-    let mut app = App::new(repos.clone(), interval);
+    let mut app = App::new(repos.clone());
     let client = Arc::new(client);
 
     // Input task
@@ -183,6 +192,7 @@ async fn run_app(
         loop {
             let mut all_runs = Vec::new();
             let mut last_rl = None;
+            let mut had_error = false;
 
             for repo in &repos_poll {
                 match client_poll.fetch_runs(repo).await {
@@ -191,6 +201,7 @@ async fn run_app(
                         last_rl = Some(rl);
                     }
                     Err(e) => {
+                        had_error = true;
                         let _ = tx_poll
                             .send(AppEvent::ApiError(format!("{repo}: {e}")))
                             .await;
@@ -205,6 +216,9 @@ async fn run_app(
                     poll_dur = Duration::from_secs(interval);
                 }
                 let _ = tx_poll.send(AppEvent::RunsUpdated(all_runs, rl)).await;
+            } else if had_error {
+                // All repos failed -- stop the loading spinner
+                let _ = tx_poll.send(AppEvent::LoadingDone).await;
             }
 
             tokio::time::sleep(poll_dur).await;
@@ -224,7 +238,8 @@ async fn run_app(
                 AppEvent::Tick => app.on_tick(),
                 AppEvent::RunsUpdated(runs, rl) => app.update_runs(runs, rl),
                 AppEvent::JobsUpdated(run_id, jobs) => app.update_jobs(run_id, jobs),
-                AppEvent::ApiError(err) => app.error = Some(err),
+                AppEvent::ApiError(err) => app.set_error(err),
+                AppEvent::LoadingDone => app.mark_loading_done(),
             }
         }
 

@@ -10,13 +10,14 @@ use crate::ui::theme;
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let mut spans = vec![
         Span::styled(" gha ", Style::default().fg(theme::HEADER_FG).bold()),
-        Span::raw("\u{2502} "),
+        Span::styled("\u{2502} ", Style::default().fg(theme::BORDER_COLOR)),
     ];
 
+    // Repos
     if app.repos.len() <= 3 {
         for (i, repo) in app.repos.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::raw(", "));
+                spans.push(Span::styled(", ", Style::default().fg(theme::DIM_FG)));
             }
             spans.push(Span::styled(
                 repo.as_str(),
@@ -30,8 +31,33 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    spans.push(Span::raw(" \u{2502} "));
+    spans.push(Span::styled(
+        " \u{2502} ",
+        Style::default().fg(theme::BORDER_COLOR),
+    ));
 
+    // Run count (M1)
+    if !app.runs.is_empty() {
+        let shown = app.filtered_runs.len();
+        let total = app.runs.len();
+        if shown == total {
+            spans.push(Span::styled(
+                format!("{total} runs"),
+                Style::default().fg(theme::DIM_FG),
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!("{shown}/{total}"),
+                Style::default().fg(theme::HEADER_FG),
+            ));
+        }
+        spans.push(Span::styled(
+            " \u{2502} ",
+            Style::default().fg(theme::BORDER_COLOR),
+        ));
+    }
+
+    // Rate limit
     if let Some(ref rl) = app.rate_limit {
         let color = if rl.remaining < 100 {
             theme::FAILURE_COLOR
@@ -41,22 +67,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             theme::DIM_FG
         };
         spans.push(Span::styled(
-            format!("API: {}/{}", rl.remaining, rl.limit),
+            format!("API {}/{}", rl.remaining, rl.limit),
             Style::default().fg(color),
         ));
     } else {
         spans.push(Span::styled(
-            "API: --",
+            "API --",
             Style::default().fg(theme::DIM_FG),
         ));
     }
 
-    spans.push(Span::raw(" \u{2502} "));
+    spans.push(Span::styled(
+        " \u{2502} ",
+        Style::default().fg(theme::BORDER_COLOR),
+    ));
 
+    // Last refresh
     if let Some(last) = app.last_refresh {
-        let ago = format_relative_time(last);
+        let ago = theme::format_relative_time(last);
         spans.push(Span::styled(
-            format!("\u{21BB} {ago}"),
+            format!("\u{21BB} {ago} ago"),
             Style::default().fg(theme::DIM_FG),
         ));
     } else if app.loading {
@@ -67,8 +97,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    spans.push(Span::raw(" \u{2502} "));
+    spans.push(Span::styled(
+        " \u{2502} ",
+        Style::default().fg(theme::BORDER_COLOR),
+    ));
 
+    // Quick filter
     let (filter_label, filter_color) = match app.quick_filter {
         QuickFilter::All => ("all", theme::DIM_FG),
         QuickFilter::Failed => ("failed", theme::FAILURE_COLOR),
@@ -77,8 +111,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     };
     spans.push(Span::styled(filter_label, Style::default().fg(filter_color)));
 
+    // Search indicator
     if app.input_mode == InputMode::Search || !app.search_query.is_empty() {
-        spans.push(Span::raw(" \u{2502} "));
+        spans.push(Span::styled(
+            " \u{2502} ",
+            Style::default().fg(theme::BORDER_COLOR),
+        ));
         spans.push(Span::styled(
             "/",
             Style::default().fg(theme::RUNNING_COLOR),
@@ -95,8 +133,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
+    // Error (auto-clears via app.on_tick)
     if let Some(ref err) = app.error {
-        spans.push(Span::raw(" \u{2502} "));
+        spans.push(Span::styled(
+            " \u{2502} ",
+            Style::default().fg(theme::BORDER_COLOR),
+        ));
         spans.push(Span::styled(
             err.as_str(),
             Style::default().fg(theme::ERROR_FG),
@@ -106,20 +148,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let header = Paragraph::new(Line::from(spans)).block(
         Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(theme::BORDER_COLOR)),
+            .border_style(Style::default().fg(theme::BORDER_COLOR))
+            .style(Style::default().bg(theme::BG_COLOR)),
     );
     frame.render_widget(header, area);
-}
-
-fn format_relative_time(time: chrono::DateTime<chrono::Utc>) -> String {
-    let diff = chrono::Utc::now() - time;
-    if diff.num_seconds() < 60 {
-        format!("{}s ago", diff.num_seconds())
-    } else if diff.num_minutes() < 60 {
-        format!("{}m ago", diff.num_minutes())
-    } else if diff.num_hours() < 24 {
-        format!("{}h ago", diff.num_hours())
-    } else {
-        format!("{}d ago", diff.num_days())
-    }
 }
