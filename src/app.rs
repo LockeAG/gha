@@ -1,10 +1,11 @@
+use std::collections::HashSet;
 use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::TableState;
 
 use crate::github::RateLimit;
-use crate::models::{Conclusion, Job, RunStatus, WorkflowRun};
+use crate::models::{Conclusion, Job, RepoInfo, RunStatus, WorkflowRun};
 
 const MAX_SEARCH_LEN: usize = 64;
 
@@ -12,6 +13,7 @@ const MAX_SEARCH_LEN: usize = 64;
 pub enum View {
     Dashboard,
     Detail,
+    RepoPicker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,10 +53,20 @@ pub struct App {
     pub loading: bool,
     pub has_in_progress: bool,
     pub visible_rows: usize,
+    // Repo picker
+    pub all_org_repos: Vec<RepoInfo>,
+    pub explicit_repos: Vec<String>,
+    pub watched_set: HashSet<String>,
+    pub picker_state: TableState,
 }
 
 impl App {
-    pub fn new(repos: Vec<String>) -> Self {
+    pub fn new(
+        watched: Vec<String>,
+        explicit: Vec<String>,
+        all_org_repos: Vec<RepoInfo>,
+    ) -> Self {
+        let watched_set: HashSet<String> = watched.iter().cloned().collect();
         Self {
             runs: Vec::new(),
             filtered_runs: Vec::new(),
@@ -72,11 +84,15 @@ impl App {
             error: None,
             error_at: None,
             should_quit: false,
-            repos,
+            repos: watched,
             spinner_frame: 0,
             loading: true,
             has_in_progress: false,
             visible_rows: 20,
+            all_org_repos,
+            explicit_repos: explicit,
+            watched_set,
+            picker_state: TableState::default().with_selected(0),
         }
     }
 
@@ -85,12 +101,17 @@ impl App {
             self.should_quit = true;
             return None;
         }
+        match self.view {
+            View::RepoPicker => return self.handle_picker_key(key),
+            _ => {}
+        }
         match self.input_mode {
             InputMode::Search => self.handle_search_key(key),
             InputMode::Filter => self.handle_filter_key(key),
             InputMode::Normal => match self.view {
                 View::Dashboard => self.handle_dashboard_key(key),
                 View::Detail => self.handle_detail_key(key),
+                View::RepoPicker => unreachable!(),
             },
         }
     }
@@ -170,6 +191,12 @@ impl App {
             KeyCode::Char('/') => self.input_mode = InputMode::Search,
             KeyCode::Char('f') => self.input_mode = InputMode::Filter,
             KeyCode::Char('r') => return Some(AppAction::ForceRefresh),
+            KeyCode::Char('a') => {
+                if !self.all_org_repos.is_empty() {
+                    self.view = View::RepoPicker;
+                    self.picker_state.select(Some(0));
+                }
+            }
             KeyCode::Char('1') => {
                 self.quick_filter = QuickFilter::All;
                 self.apply_filters();
@@ -271,6 +298,70 @@ impl App {
         None
     }
 
+    fn handle_picker_key(&mut self, key: KeyEvent) -> Option<AppAction> {
+        let len = self.all_org_repos.len();
+        match key.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc | KeyCode::Char('a') => {
+                // Apply changes and go back
+                self.rebuild_repos();
+                self.view = View::Dashboard;
+                return Some(AppAction::ReposChanged(self.repos.clone()));
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if len > 0 {
+                    let i = self
+                        .picker_state
+                        .selected()
+                        .map_or(0, |i| (i + 1).min(len - 1));
+                    self.picker_state.select(Some(i));
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                let i = self
+                    .picker_state
+                    .selected()
+                    .map_or(0, |i| i.saturating_sub(1));
+                self.picker_state.select(Some(i));
+            }
+            KeyCode::Char('g') => self.picker_state.select(Some(0)),
+            KeyCode::Char('G') => {
+                if len > 0 {
+                    self.picker_state.select(Some(len - 1));
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                if let Some(idx) = self.picker_state.selected() {
+                    if let Some(repo) = self.all_org_repos.get(idx) {
+                        let name = repo.full_name.clone();
+                        // Don't allow unchecking explicit repos
+                        if !self.explicit_repos.contains(&name) {
+                            if self.watched_set.contains(&name) {
+                                self.watched_set.remove(&name);
+                            } else {
+                                self.watched_set.insert(name);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn rebuild_repos(&mut self) {
+        let mut repos: Vec<String> = self.explicit_repos.clone();
+        for r in &self.all_org_repos {
+            if self.watched_set.contains(&r.full_name)
+                && !repos.contains(&r.full_name)
+            {
+                repos.push(r.full_name.clone());
+            }
+        }
+        self.repos = repos;
+    }
+
     fn half_page(&self) -> usize {
         (self.visible_rows / 2).max(1)
     }
@@ -333,6 +424,7 @@ impl App {
                 let run = self.runs.iter().find(|r| r.id == run_id)?;
                 Some(AppAction::OpenUrl(run.html_url.clone()))
             }
+            _ => None,
         }
     }
 
@@ -368,7 +460,6 @@ impl App {
     }
 
     pub fn update_jobs(&mut self, run_id: u64, jobs: Vec<Job>) {
-        // Guard: only apply if we're still looking at this run
         if self.current_run_id == Some(run_id) && self.view == View::Detail {
             self.jobs = jobs;
         }
@@ -388,7 +479,6 @@ impl App {
     }
 
     pub fn set_error(&mut self, err: String) {
-        // Truncate long error messages for header display
         let truncated = if err.len() > 60 {
             format!("{}...", &err[..57])
         } else {
@@ -457,4 +547,5 @@ pub enum AppAction {
     ForceRefresh,
     FetchJobs(String, u64),
     OpenUrl(String),
+    ReposChanged(Vec<String>),
 }

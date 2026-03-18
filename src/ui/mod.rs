@@ -1,6 +1,7 @@
 pub mod dashboard;
 pub mod detail;
 pub mod header;
+pub mod picker;
 pub mod theme;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -45,6 +46,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     match app.view {
         View::Dashboard => dashboard::render(frame, chunks[1], app),
         View::Detail => detail::render(frame, chunks[1], app),
+        View::RepoPicker => picker::render(frame, chunks[1], app),
     }
 
     render_footer(frame, chunks[2], app);
@@ -101,10 +103,20 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled(" search ", Style::default().fg(theme::DIM_FG)),
                 Span::styled("f", Style::default().fg(theme::HEADER_FG)),
                 Span::styled(" filter ", Style::default().fg(theme::DIM_FG)),
+                Span::styled("a", Style::default().fg(theme::HEADER_FG)),
+                Span::styled(" repos ", Style::default().fg(theme::DIM_FG)),
                 Span::styled("r", Style::default().fg(theme::HEADER_FG)),
                 Span::styled(" refresh ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("^d/^u", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" page ", Style::default().fg(theme::DIM_FG)),
+                Span::styled("q", Style::default().fg(theme::HEADER_FG)),
+                Span::styled(" quit", Style::default().fg(theme::DIM_FG)),
+            ],
+            View::RepoPicker => vec![
+                Span::styled(" j/k", Style::default().fg(theme::HEADER_FG)),
+                Span::styled(" nav ", Style::default().fg(theme::DIM_FG)),
+                Span::styled("Space", Style::default().fg(theme::HEADER_FG)),
+                Span::styled(" toggle ", Style::default().fg(theme::DIM_FG)),
+                Span::styled("ESC", Style::default().fg(theme::HEADER_FG)),
+                Span::styled(" apply ", Style::default().fg(theme::DIM_FG)),
                 Span::styled("q", Style::default().fg(theme::HEADER_FG)),
                 Span::styled(" quit", Style::default().fg(theme::DIM_FG)),
             ],

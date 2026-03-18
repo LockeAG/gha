@@ -11,7 +11,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 mod app;
 mod events;
@@ -22,6 +22,7 @@ mod ui;
 use app::{App, AppAction};
 use events::AppEvent;
 use github::GithubClient;
+use models::RepoInfo;
 
 #[derive(Parser)]
 #[command(name = "gha", about = "GitHub Actions TUI tracker")]
@@ -37,6 +38,9 @@ struct Cli {
 
     #[arg(long, default_value = "20", help = "Max runs per repo")]
     per_page: u8,
+
+    #[arg(long, default_value = "7", help = "Only watch repos active in last N days (0 = all)")]
+    days: u64,
 
     #[arg(long, help = "GitHub token (or GH_TOKEN/GITHUB_TOKEN env, or gh auth token)")]
     token: Option<String>,
@@ -92,6 +96,23 @@ fn parse_repo_from_url(url: &str) -> Option<String> {
     None
 }
 
+fn filter_active_repos(repos: &[RepoInfo], days: u64) -> Vec<String> {
+    if days == 0 {
+        return repos.iter().map(|r| r.full_name.clone()).collect();
+    }
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
+    repos
+        .iter()
+        .filter(|r| {
+            !r.archived
+                && r.pushed_at
+                    .map(|t| t > cutoff)
+                    .unwrap_or(false)
+        })
+        .map(|r| r.full_name.clone())
+        .collect()
+}
+
 fn install_panic_hook() {
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -109,21 +130,43 @@ async fn main() -> Result<()> {
     let token = resolve_token(cli.token)?;
     let client = GithubClient::new(&token, cli.per_page)?;
 
-    let mut repos: Vec<String> = cli.repo;
+    let explicit_repos: Vec<String> = cli.repo;
+    let mut all_org_repos: Vec<RepoInfo> = Vec::new();
 
     for org in &cli.org {
         match client.fetch_org_repos(org).await {
-            Ok(org_repos) => repos.extend(org_repos),
+            Ok(repos) => all_org_repos.extend(repos),
             Err(e) => bail!("Failed to fetch repos for org '{org}': {e}"),
         }
     }
 
-    if repos.is_empty() {
+    // Sort all org repos by pushed_at (most recent first)
+    all_org_repos.sort_by(|a, b| b.pushed_at.cmp(&a.pushed_at));
+
+    // Active repos = explicit + recently active org repos
+    let active_org_repos = filter_active_repos(&all_org_repos, cli.days);
+    let mut watched: Vec<String> = explicit_repos.clone();
+    for r in &active_org_repos {
+        if !watched.contains(r) {
+            watched.push(r.clone());
+        }
+    }
+
+    if watched.is_empty() && all_org_repos.is_empty() {
         if let Some(repo) = resolve_repo_from_git() {
-            repos.push(repo);
+            watched.push(repo);
         } else {
             bail!("No repos specified. Use --repo, --org, or run from a git repo.");
         }
+    }
+
+    if !all_org_repos.is_empty() && !active_org_repos.is_empty() {
+        let total = all_org_repos.len();
+        let active = active_org_repos.len();
+        eprintln!(
+            "Watching {active} of {total} org repos (active in last {}d). Press 'a' to manage.",
+            cli.days
+        );
     }
 
     install_panic_hook();
@@ -134,7 +177,15 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal, repos, client, interval).await;
+    let result = run_app(
+        &mut terminal,
+        watched,
+        explicit_repos,
+        all_org_repos,
+        client,
+        interval,
+    )
+    .await;
 
     disable_raw_mode()?;
     execute!(
@@ -149,13 +200,18 @@ async fn main() -> Result<()> {
 
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    repos: Vec<String>,
+    watched: Vec<String>,
+    explicit: Vec<String>,
+    all_org_repos: Vec<RepoInfo>,
     client: GithubClient,
     interval: u64,
 ) -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<AppEvent>(100);
-    let mut app = App::new(repos.clone());
+    let mut app = App::new(watched.clone(), explicit, all_org_repos);
     let client = Arc::new(client);
+
+    // Watch channel for repo list — poller reads current value each cycle
+    let (repos_tx, repos_rx) = watch::channel(watched);
 
     // Input task
     let tx_input = tx.clone();
@@ -183,18 +239,18 @@ async fn run_app(
         }
     });
 
-    // Poller task
+    // Poller task — reads repo list from watch channel each cycle
     let tx_poll = tx.clone();
     let client_poll = client.clone();
-    let repos_poll = repos.clone();
     tokio::spawn(async move {
         let mut poll_dur = Duration::from_secs(interval);
         loop {
+            let current_repos = repos_rx.borrow().clone();
             let mut all_runs = Vec::new();
             let mut last_rl = None;
             let mut had_error = false;
 
-            for repo in &repos_poll {
+            for repo in &current_repos {
                 match client_poll.fetch_runs(repo).await {
                     Ok((resp, rl)) => {
                         all_runs.extend(resp.workflow_runs);
@@ -217,7 +273,6 @@ async fn run_app(
                 }
                 let _ = tx_poll.send(AppEvent::RunsUpdated(all_runs, rl)).await;
             } else if had_error {
-                // All repos failed -- stop the loading spinner
                 let _ = tx_poll.send(AppEvent::LoadingDone).await;
             }
 
@@ -232,7 +287,7 @@ async fn run_app(
             match ev {
                 AppEvent::Key(key) => {
                     if let Some(action) = app.handle_key(key) {
-                        handle_action(action, &client, &tx, &repos, &mut app).await;
+                        handle_action(action, &client, &tx, &repos_tx, &mut app).await;
                     }
                 }
                 AppEvent::Tick => app.on_tick(),
@@ -253,7 +308,7 @@ async fn handle_action(
     action: AppAction,
     client: &Arc<GithubClient>,
     tx: &mpsc::Sender<AppEvent>,
-    repos: &[String],
+    repos_tx: &watch::Sender<Vec<String>>,
     app: &mut App,
 ) {
     match action {
@@ -261,7 +316,7 @@ async fn handle_action(
             app.loading = true;
             let c = client.clone();
             let t = tx.clone();
-            let r = repos.to_vec();
+            let r = app.repos.clone();
             tokio::spawn(async move {
                 let mut all_runs = Vec::new();
                 let mut last_rl = None;
@@ -297,6 +352,35 @@ async fn handle_action(
         }
         AppAction::OpenUrl(url) => {
             let _ = open::that(&url);
+        }
+        AppAction::ReposChanged(new_repos) => {
+            // Update the poller's repo list via watch channel
+            let _ = repos_tx.send(new_repos);
+            // Trigger immediate refresh
+            app.loading = true;
+            let c = client.clone();
+            let t = tx.clone();
+            let r = app.repos.clone();
+            tokio::spawn(async move {
+                let mut all_runs = Vec::new();
+                let mut last_rl = None;
+                for repo in &r {
+                    match c.fetch_runs(repo).await {
+                        Ok((resp, rl)) => {
+                            all_runs.extend(resp.workflow_runs);
+                            last_rl = Some(rl);
+                        }
+                        Err(e) => {
+                            let _ = t.send(AppEvent::ApiError(format!("{repo}: {e}"))).await;
+                        }
+                    }
+                }
+                if let Some(rl) = last_rl {
+                    let _ = t.send(AppEvent::RunsUpdated(all_runs, rl)).await;
+                } else {
+                    let _ = t.send(AppEvent::LoadingDone).await;
+                }
+            });
         }
     }
 }

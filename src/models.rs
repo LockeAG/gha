@@ -64,6 +64,15 @@ pub enum Conclusion {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct RepoInfo {
+    pub full_name: String,
+    pub pushed_at: Option<DateTime<Utc>>,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct JobsResponse {
     pub jobs: Vec<Job>,
 }

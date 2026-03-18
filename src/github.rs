@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 
-use crate::models::{JobsResponse, WorkflowRunsResponse};
+use crate::models::{JobsResponse, RepoInfo, WorkflowRunsResponse};
 
 pub struct RateLimit {
     pub remaining: u64,
@@ -60,14 +60,11 @@ impl GithubClient {
         Ok((body, rl))
     }
 
-    pub async fn fetch_org_repos(&self, org: &str) -> Result<Vec<String>> {
+    pub async fn fetch_org_repos(&self, org: &str) -> Result<Vec<RepoInfo>> {
         let url = format!("https://api.github.com/orgs/{org}/repos?per_page=100&sort=pushed");
         let resp = self.client.get(&url).send().await?;
-        let repos: Vec<serde_json::Value> = resp.error_for_status()?.json().await?;
-        Ok(repos
-            .iter()
-            .filter_map(|r| r["full_name"].as_str().map(String::from))
-            .collect())
+        let repos: Vec<RepoInfo> = resp.error_for_status()?.json().await?;
+        Ok(repos)
     }
 
     pub async fn fetch_jobs(&self, repo: &str, run_id: u64) -> Result<(JobsResponse, RateLimit)> {
