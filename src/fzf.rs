@@ -7,12 +7,25 @@ use crate::github::GithubClient;
 use crate::models::{Conclusion, RepoInfo, RunStatus, WorkflowRun};
 use crate::ui::theme;
 
+// ANSI helpers
+const RESET: &str = "\x1b[0m";
+const DIM: &str = "\x1b[90m";
+const BOLD: &str = "\x1b[1m";
+const WHITE: &str = "\x1b[97m";
+
+// Tab delimiter for fzf --delimiter
+const TAB: char = '\t';
+
 pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> Result<()> {
     if repos.is_empty() {
         bail!("No repos to search.");
     }
 
-    eprint!("\x1b[90mFetching {} repo{}...\x1b[0m\r", repos.len(), if repos.len() == 1 { "" } else { "s" });
+    eprint!(
+        "\x1b[90mFetching {} repo{}...\x1b[0m\r",
+        repos.len(),
+        if repos.len() == 1 { "" } else { "s" }
+    );
 
     let all_runs = fetch_all_runs(client, repos).await;
 
@@ -20,45 +33,50 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
         bail!("No workflow runs found.");
     }
 
+    // Format: icon \t repo \t workflow \t branch \t age \t #num \t URL
     let lines: Vec<String> = all_runs
         .iter()
         .enumerate()
         .map(|(i, run)| format_run_line(i, run))
         .collect();
 
+    let header = format!(
+        "  {DIM}Repo{RESET}{TAB}{DIM}Workflow{RESET}{TAB}{DIM}Branch{RESET}{TAB}{DIM}  Age{RESET}{TAB}{DIM}    #{RESET}"
+    );
+
     if action == "detail" {
-        // Loop: run picker ↔ detail view. Esc in detail goes back to runs.
         loop {
-            let selection = match run_fzf(&lines, "workflow run") {
+            let selection = match run_fzf_tabbed(&lines, &header, 6) {
                 Ok(s) => s,
-                Err(_) => return Ok(()), // Esc at run list = exit
+                Err(_) => return Ok(()),
             };
-            let run_idx = extract_index(&selection);
+            let run_idx = extract_field(&selection, 0)
+                .and_then(|s| strip_ansi(&s).trim().parse::<usize>().ok());
             if let Some(run) = run_idx.and_then(|i| all_runs.get(i)) {
                 match show_detail(client, run).await {
-                    Ok(()) => return Ok(()), // opened in browser, done
-                    Err(_) => continue,      // Esc in detail = back to runs
+                    Ok(()) => return Ok(()),
+                    Err(_) => continue,
                 }
             }
         }
     }
 
-    let selection = run_fzf(&lines, "workflow run")?;
+    let selection = run_fzf_tabbed(&lines, &header, 6)?;
 
     match action {
         "url" => {
-            if let Some(u) = extract_url(&selection) {
-                println!("{u}");
+            if let Some(url) = extract_field(&selection, 6) {
+                println!("{}", url.trim());
             }
         }
         "id" => {
-            if let Some(num) = extract_run_number(&selection) {
-                println!("{num}");
+            if let Some(num) = extract_field(&selection, 5) {
+                println!("{}", strip_ansi(&num).trim().trim_start_matches('#'));
             }
         }
         _ => {
-            if let Some(u) = extract_url(&selection) {
-                open::that(u)?;
+            if let Some(url) = extract_field(&selection, 6) {
+                open::that(url.trim())?;
             }
         }
     }
@@ -75,14 +93,14 @@ async fn show_detail(client: &GithubClient, run: &WorkflowRun) -> Result<()> {
         bail!("No jobs found for this run.");
     }
 
+    // Format: tree+icon \t name \t duration \t URL
     let mut lines = Vec::new();
     for job in &jobs_resp.jobs {
         let icon = status_ansi(job.status, job.conclusion);
-        let duration = format_duration(job.started_at, job.completed_at);
+        let dur = format_duration(job.started_at, job.completed_at);
         lines.push(format!(
-            "{icon} {name:<40} {dur:>10}  {url}",
+            " {icon}{TAB}{BOLD}{WHITE}{name}{RESET}{TAB}{DIM}{dur:>8}{RESET}{TAB}{url}",
             name = job.name,
-            dur = duration,
             url = job.html_url,
         ));
 
@@ -92,13 +110,12 @@ async fn show_detail(client: &GithubClient, run: &WorkflowRun) -> Result<()> {
                 let s_icon = status_ansi(step.status, step.conclusion);
                 let s_dur = format_duration(step.started_at, step.completed_at);
                 let tree = if si == count - 1 {
-                    "\x1b[90m\u{2514}\u{2500}\x1b[0m"
+                    "\u{2514}\u{2500}"
                 } else {
-                    "\x1b[90m\u{251C}\u{2500}\x1b[0m"
+                    "\u{251C}\u{2500}"
                 };
-                // Steps use the job URL since steps don't have their own
                 lines.push(format!(
-                    "   {tree} {s_icon} {name:<36} {dur:>10}  {url}",
+                    " {DIM}{tree}{RESET} {s_icon}{TAB}{name}{TAB}{DIM}{dur:>8}{RESET}{TAB}{url}",
                     name = step.name,
                     dur = s_dur,
                     url = job.html_url,
@@ -116,11 +133,10 @@ async fn show_detail(client: &GithubClient, run: &WorkflowRun) -> Result<()> {
         run.actor.login,
     );
 
-    let selection = run_fzf_with_header(&lines, &header)?;
-    let url = extract_url(&selection);
+    let selection = run_fzf_tabbed(&lines, &header, 3)?;
 
-    if let Some(u) = url {
-        open::that(u)?;
+    if let Some(url) = extract_field(&selection, 3) {
+        open::that(url.trim())?;
     }
 
     Ok(())
@@ -130,6 +146,8 @@ pub async fn pick_repo(client: &GithubClient, orgs: &[String], action: &str) -> 
     if orgs.is_empty() {
         bail!("No orgs specified. Use --org.");
     }
+
+    eprint!("\x1b[90mFetching repos...\x1b[0m\r");
 
     let mut all_repos: Vec<RepoInfo> = Vec::new();
     for org in orgs {
@@ -147,14 +165,9 @@ pub async fn pick_repo(client: &GithubClient, orgs: &[String], action: &str) -> 
     let lines: Vec<String> = all_repos
         .iter()
         .map(|repo| {
-            let archived = if repo.archived {
-                "\x1b[90m[archived]\x1b[0m "
-            } else {
-                ""
-            };
             let age = repo
                 .pushed_at
-                .map(|t| format!("{} ago", theme::format_relative_time(t)))
+                .map(|t| theme::format_relative_time(t))
                 .unwrap_or_default();
             let desc = repo
                 .description
@@ -163,22 +176,25 @@ pub async fn pick_repo(client: &GithubClient, orgs: &[String], action: &str) -> 
                 .chars()
                 .take(50)
                 .collect::<String>();
+            let tag = if repo.archived {
+                format!(" {DIM}[archived]{RESET}")
+            } else {
+                String::new()
+            };
             format!(
-                "{archived}{name:<35} {age:<10} {desc}",
+                "{WHITE}{name}{RESET}{tag}{TAB}{DIM}{age:>5} ago{RESET}{TAB}{DIM}{desc}{RESET}",
                 name = repo.full_name,
             )
         })
         .collect();
 
-    let selection = run_fzf(&lines, "repo")?;
+    let header = format!("{DIM}Repo{RESET}{TAB}{DIM}  Active{RESET}{TAB}{DIM}Description{RESET}");
+    let selection = run_fzf_tabbed(&lines, &header, 3)?;
 
     let clean = strip_ansi(&selection);
-    let repo_name = clean.split_whitespace().next().unwrap_or("").trim();
+    let repo_name = clean.split('\t').next().unwrap_or("").trim();
 
-    match action {
-        "name" => println!("{repo_name}"),
-        _ => println!("{repo_name}"),
-    }
+    println!("{repo_name}");
 
     Ok(())
 }
@@ -194,27 +210,29 @@ fn format_run_line(idx: usize, run: &WorkflowRun) -> String {
     let name = run.name.as_deref().unwrap_or("\u{2014}");
     let branch = run.head_branch.as_deref().unwrap_or("\u{2014}");
     let age = theme::format_relative_time(run.updated_at);
-    // Hidden index prefix for lookup after selection
+    let num = format!("#{}", run.run_number);
+
+    // Field 0: hidden index + icon (display)
+    // Field 1: repo
+    // Field 2: workflow
+    // Field 3: branch
+    // Field 4: age
+    // Field 5: #num
+    // Field 6: URL (hidden from display)
     format!(
-        "\x1b[0m\x1b[8m{idx}\x1b[0m {icon} {repo:<20} {name:<25} {branch:<15} {age:>5} #{:<6} {url}",
-        run.run_number,
+        "\x1b[8m{idx}\x1b[0m {icon}{TAB}{WHITE}{repo}{RESET}{TAB}{name}{TAB}{DIM}{branch}{RESET}{TAB}{DIM}{age:>5}{RESET}{TAB}{DIM}{num:>5}{RESET}{TAB}{url}",
         url = run.html_url,
     )
 }
 
-fn run_fzf(lines: &[String], label: &str) -> Result<String> {
-    run_fzf_with_header(lines, &format!("Select a {label}"))
-}
-
-fn run_fzf_with_header(lines: &[String], header: &str) -> Result<String> {
+fn run_fzf_tabbed(lines: &[String], header: &str, hide_from: usize) -> Result<String> {
     let input = lines.join("\n");
 
-    // Write to temp file so fzf's stdin stays on /dev/tty for keyboard input.
-    // Piping stdin directly breaks fzf in tmux popups.
     let tmp = std::env::temp_dir().join(format!("gha-fzf-{}", std::process::id()));
     fs::write(&tmp, &input)?;
-
     let input_file = fs::File::open(&tmp)?;
+
+    let with_nth = format!("--with-nth=1..{hide_from}");
 
     let child = Command::new("fzf")
         .args([
@@ -222,6 +240,9 @@ fn run_fzf_with_header(lines: &[String], header: &str) -> Result<String> {
             "--no-sort",
             "--reverse",
             "--no-multi",
+            "--delimiter=\t",
+            &with_nth,
+            "--tabstop=18",
             &format!("--header={header}"),
             &format!("--color={}", theme::t().fzf_colors),
         ])
@@ -309,21 +330,8 @@ fn format_duration(
     }
 }
 
-fn extract_url(line: &str) -> Option<&str> {
-    line.split_whitespace()
-        .rfind(|s| s.starts_with("https://"))
-}
-
-fn extract_run_number(line: &str) -> Option<&str> {
-    line.split_whitespace()
-        .find(|s| s.starts_with('#'))
-        .map(|s| s.trim_start_matches('#'))
-}
-
-fn extract_index(line: &str) -> Option<usize> {
-    // Hidden index is between ANSI invisible markers: \x1b[8m{idx}\x1b[0m
-    let stripped = strip_ansi(line);
-    stripped.split_whitespace().next()?.parse().ok()
+fn extract_field<'a>(line: &'a str, idx: usize) -> Option<&'a str> {
+    line.split('\t').nth(idx)
 }
 
 fn strip_ansi(s: &str) -> String {
