@@ -10,6 +10,7 @@ pub struct Config {
     pub interval: Option<u64>,
     pub days: Option<u64>,
     pub per_page: Option<u8>,
+    pub max_repos: Option<usize>,
     pub orgs: Vec<String>,
     pub repos: Vec<String>,
 }
@@ -51,6 +52,9 @@ pub fn generate_sample() -> &'static str {
 
 # Max workflow runs fetched per repo
 # per_page = 20
+
+# Max repos to auto-watch from orgs (0 = all, press 'a' for more)
+# max_repos = 5
 
 # Organizations to watch
 # orgs = ["MyOrg"]

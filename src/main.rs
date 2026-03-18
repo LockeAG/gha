@@ -53,6 +53,9 @@ struct Cli {
 
     #[arg(long, global = true, help = "Color theme: catppuccin-mocha, tokyo-night, tokyo-night-storm")]
     theme: Option<String>,
+
+    #[arg(long, global = true, help = "Max repos to auto-watch from orgs (default 5, 0 = all)")]
+    max_repos: Option<usize>,
 }
 
 /// Resolved settings after merging CLI > config > defaults
@@ -64,6 +67,7 @@ struct Settings {
     interval: u64,
     theme: String,
     token: Option<String>,
+    max_repos: usize,
 }
 
 impl Settings {
@@ -90,6 +94,7 @@ impl Settings {
                 .or_else(|| cfg.theme.clone())
                 .unwrap_or_else(|| "catppuccin-mocha".to_string()),
             token: cli.token.clone(),
+            max_repos: cli.max_repos.or(cfg.max_repos).unwrap_or(5),
         }
     }
 }
@@ -233,6 +238,10 @@ async fn resolve_repos(
     let mut watched: Vec<String> = explicit_repos.clone();
     for r in &active_org_repos {
         if !watched.contains(r) {
+            // Cap at max_repos (0 = unlimited)
+            if settings.max_repos > 0 && watched.len() >= settings.max_repos + explicit_repos.len() {
+                break;
+            }
             watched.push(r.clone());
         }
     }
