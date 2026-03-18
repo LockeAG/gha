@@ -1,88 +1,73 @@
 # gha
 
-A live GitHub Actions dashboard for the terminal. Never leave your shell to check CI status.
+GitHub Actions in the terminal. Dashboard, drill-down, logs, re-runs — without opening a browser.
 
 ## Install
 
-### Homebrew (macOS / Linux)
-
 ```sh
+# Homebrew (macOS / Linux)
 brew tap LockeAG/tap
 brew install gha
-```
 
-### Cargo (from source)
-
-```sh
+# Cargo
 cargo install --git https://github.com/LockeAG/gha
+
+# Prebuilt binaries
+# https://github.com/LockeAG/gha/releases
 ```
 
-### Prebuilt binaries
-
-Download from [Releases](https://github.com/LockeAG/gha/releases) for macOS (arm64/x86_64) and Linux (x86_64/arm64).
-
-## Why
-
-Context switching kills flow. Opening a browser tab to check if CI passed is a small interruption that adds up across dozens of pushes a day. `gha` keeps that information where you already are: the terminal.
-
-## Usage
+## Quick start
 
 ```sh
-# Auto-detect repo from current git directory
-gha
-
-# Watch all repos in an org (auto-filters to recently active)
-gha --org MyOrg
-
-# Watch specific repos (always polled, not filtered)
-gha --repo owner/repo --repo owner/other-repo
-
-# Custom poll interval (seconds, min 10)
-gha --interval 15
-
-# Control activity window (default: 7 days, 0 = all repos)
-gha --org MyOrg --days 14
-
-# Color theme
-gha --theme tokyo-night
+gha                          # auto-detect repo from git remote
+gha --org MyOrg              # watch an org (or user account)
+gha --repo owner/name        # watch specific repos
+gha init                     # generate config file
 ```
 
-### Smart repo filtering
+If you have `gh` CLI authenticated, that's it. No token setup needed.
 
-When using `--org`, gha fetches all repos but only polls those with a push in the last 7 days. Archived repos are excluded. This keeps API usage sane -- an org with 50 repos but 4 active ones only costs 4 API calls per cycle.
+## What it does
 
-Press `a` inside the TUI to open the repo picker and toggle any org repo on or off.
+**Dashboard** — live-updating table of workflow runs across your repos. Status icons, branch, age, run number. Polls every 30s (5s when runs are in-progress).
 
-### Token resolution
+**Detail view** — drill into a run to see jobs and steps as a tree with durations. `Enter` from dashboard.
 
-Checked in order:
-1. `--token` flag
-2. `GH_TOKEN` env
-3. `GITHUB_TOKEN` env
-4. `gh auth token` (GitHub CLI)
+**Log viewer** — read job output directly in the terminal. `L` on a completed job. Error lines highlighted red, warnings yellow. Auto-tails to the end.
 
-### Config file
+**Re-run** — trigger a re-run without leaving the TUI. `R` on any run. Smart: re-runs only failed jobs on failures, full workflow otherwise.
+
+**Repo picker** — toggle which org repos to watch at runtime. `a` to open.
+
+**fzf mode** — composable pickers for tmux popups. `gha fzf runs --action detail` gives you a two-stage fzf flow: pick a run, browse its jobs.
+
+## Configuration
 
 ```sh
 gha init  # creates ~/.config/gha/config.toml
 ```
 
 ```toml
-# ~/.config/gha/config.toml
-theme = "tokyo-night"
+theme = "tokyo-night-storm"
 interval = 15
 days = 7
-orgs = ["DreamsEngine"]
-repos = ["LockeAG/gha"]
+max_repos = 5
+orgs = ["DreamsEngine", "LockeAG"]
+repos = ["some/pinned-repo"]
 ```
 
 CLI flags override config values. Respects `XDG_CONFIG_HOME`. Stow-friendly.
 
+### Token resolution
+
+1. `--token` flag
+2. `GH_TOKEN` env
+3. `GITHUB_TOKEN` env
+4. `gh auth token` (GitHub CLI)
+
 ### Themes
 
-Three built-in themes via `--theme`:
-
-| Flag | Alias |
+| Name | Alias |
 |------|-------|
 | `catppuccin-mocha` (default) | `mocha` |
 | `tokyo-night` | `tn` |
@@ -94,133 +79,96 @@ Three built-in themes via `--theme`:
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Navigate up/down |
+| `j` / `k` | Navigate |
 | `Ctrl-d` / `Ctrl-u` | Half-page scroll |
-| `g` / `G` | Jump to top / bottom |
-| `Enter` | Drill into job/step detail |
-| `o` | Open run in browser |
-| `/` | Search (repo, workflow, branch, actor) |
+| `g` / `G` | Top / bottom |
+| `Enter` | Detail view |
+| `o` | Open in browser |
+| `R` | Re-run workflow |
+| `/` | Search |
 | `f` | Filter mode |
-| `1` - `4` | Quick filter: all / failed / running / success |
-| `a` | Repo picker (toggle org repos) |
-| `R` | Re-run workflow (re-runs failed jobs if run failed) |
-| `r` | Force refresh |
-| `q` / `Ctrl-C` | Quit |
+| `1`-`4` | Quick filter: all / fail / running / pass |
+| `a` | Repo picker |
+| `r` | Refresh |
+| `q` | Quit |
 
 ### Detail view
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Scroll jobs/steps |
-| `Ctrl-d` / `Ctrl-u` | Half-page scroll |
-| `o` / `Enter` | Open in browser |
-| `L` / `l` | View job logs (completed jobs only) |
+| `j` / `k` | Navigate jobs/steps |
+| `L` | View job logs |
 | `R` | Re-run workflow |
-| `Esc` | Back to dashboard |
-| `q` | Quit |
+| `o` | Open in browser |
+| `Esc` | Back |
 
 ### Log viewer
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Scroll line by line |
-| `Ctrl-d` / `Ctrl-u` | Half-page scroll |
-| `g` / `G` | Jump to top / bottom |
-| `Esc` | Back to detail view |
-| `q` | Quit |
+| `j` / `k` | Scroll |
+| `Ctrl-d` / `Ctrl-u` | Page scroll |
+| `g` / `G` | Top / end |
+| `Esc` | Back |
 
 ### Repo picker
 
 | Key | Action |
 |-----|--------|
 | `j` / `k` | Navigate |
-| `Space` / `Enter` | Toggle repo on/off |
-| `Esc` | Apply and return to dashboard |
+| `Space` | Toggle |
+| `Esc` | Apply |
 
 ## fzf + tmux
 
-`gha fzf` provides composable pickers powered by fzf. Designed for tmux popup workflows.
-
 ```sh
-# Pick a run and open in browser
-gha fzf runs --org MyOrg
-
-# Pick a run, drill into job/step detail, then open
-gha fzf runs --org MyOrg --action detail
-
-# Output URL for piping
-gha fzf runs --org MyOrg --action url
-
-# Pick a repo
-gha fzf repos --org MyOrg
+gha fzf runs --action detail     # pick run → browse jobs → open
+gha fzf runs --action url        # output URL for piping
+gha fzf runs --action open       # pick and open (default)
+gha fzf repos                    # pick a repo name
 ```
 
-In detail mode, Esc goes back to the run list.
-
-### tmux keybindings
-
-Add to `.tmux.conf`:
+### tmux keybinding
 
 ```sh
-# Prefix + g: pick a run with detail drill-down
-bind-key g display-popup -E -w 80% -h 60% "gha fzf runs --org MyOrg --action detail"
-
-# Prefix + G: pick a repo, then browse its runs
-bind-key G display-popup -E -w 80% -h 60% \
-  "gha fzf repos --org MyOrg | xargs -I{} gha fzf runs --repo {} --action detail"
+bind-key g display-popup -E -w 80% -h 80% -b rounded -S fg=#565f89 \
+  "gha fzf runs --action detail"
 ```
 
-Requires `fzf` installed. Colors match the selected `--theme`.
+Reads config for theme and orgs. Colors match the selected theme. Requires `fzf`.
 
 ## Architecture
-
-Three async tasks feeding a single `mpsc` channel. Main thread owns all state and renders UI. No shared mutexes. Data flows one direction.
 
 ```
 crossterm input ──┐
 tick timer (250ms) ┤──> mpsc<AppEvent> ──> main loop (App + Terminal)
 API poller ────────┘         ↑
-                    watch<Vec<String>> (repo list updates from picker)
+                    watch<Vec<String>> (repo list)
+                    watch<bool> (active run detection → adaptive polling)
 ```
 
-- Polls GitHub REST API on configurable interval (default 30s)
-- Jobs fetched on-demand only (when you press Enter), not polled
-- Auto-downgrades poll interval to 60s when rate limit drops below 100
-- Poller reads repo list from `watch` channel -- picker changes propagate immediately
-- Panic hook restores terminal state on crash
-- Selection preserved by run ID across data refreshes
+- Unidirectional data flow, no shared mutexes
+- Adaptive polling: 5s when runs active, configurable interval when idle
+- Jobs and logs fetched on-demand, never polled
+- Rate limit auto-downgrade at <100 remaining
+- Panic hook restores terminal on crash
+- Selection preserved by run ID across refreshes
+
+## API usage
+
+Uses GitHub REST API with your authenticated token. Read-only operations only.
+
+**Rate budget:** 5000 req/hr authenticated. Default settings (~2 req/min/repo) safe for 40+ repos. Built-in safeguards: activity filter (`--days`), repo cap (`--max-repos`), rate limit detection, on-demand fetching.
+
+Compliant with [GitHub API Terms](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#h-api-terms).
 
 ## Stack
 
-Rust + [ratatui](https://ratatui.rs) + crossterm + tokio + reqwest (rustls). Single binary, no OpenSSL dependency. ~3.4MB.
+Rust, [ratatui](https://ratatui.rs), crossterm, tokio, reqwest (rustls). Single binary, no OpenSSL. ~3.4MB.
 
-## API usage and rate limits
+## Contributing
 
-`gha` uses the GitHub REST API with your own authenticated token. It only performs read operations (workflow runs, jobs, org repos). No data is cached, stored, or transmitted beyond your local machine.
-
-**Rate budget:** GitHub allows 5000 requests/hour for authenticated users. Default settings (30s interval, 7-day activity filter) use ~2 req/min per repo. Safe for up to ~40 active repos.
-
-**Built-in safeguards:**
-- `--days 7` (default) filters org repos to recently active only, skipping dormant repos
-- Auto-downgrades poll interval to 60s when remaining API calls drop below 100
-- Jobs are fetched on-demand (Enter key), never polled
-- `--interval` enforces a minimum of 10 seconds
-
-This is the same access pattern as the `gh` CLI and other GitHub API clients. No GitHub terms are violated. If you want to verify: [GitHub API Terms](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#h-api-terms).
-
-## Roadmap
-
-- [x] Live TUI dashboard with polling
-- [x] Smart repo filtering (activity-based, `--days`)
-- [x] Repo picker (toggle org repos at runtime)
-- [x] Detail view with tree-drawn job/step hierarchy
-- [x] fzf integration for tmux popups with detail drill-down
-- [x] Themes (Catppuccin Mocha, Tokyo Night, Tokyo Night Storm)
-- [x] Homebrew tap (`brew install LockeAG/tap/gha`)
-- [x] Prebuilt binaries (macOS arm64/x86_64, Linux x86_64/arm64)
-- [x] Workflow re-run from TUI (`R` key, smart: reruns failed jobs only on failures)
-- [x] Log viewer for completed jobs (`L` key in detail view, auto-tails to end)
-- [x] Config file (`~/.config/gha/config.toml`, `gha init`)
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs welcome.
 
 ## License
 
