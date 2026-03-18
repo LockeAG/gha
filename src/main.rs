@@ -94,14 +94,33 @@ fn resolve_token(cli_token: Option<String>) -> Result<String> {
     if let Ok(t) = std::env::var("GITHUB_TOKEN") {
         return Ok(t);
     }
-    let output = std::process::Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-        .context("Failed to run 'gh auth token'. Install gh CLI or set GH_TOKEN.")?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    } else {
-        bail!("No GitHub token found. Set GH_TOKEN, GITHUB_TOKEN, use --token, or authenticate with gh CLI.")
+    match std::process::Command::new("gh").args(["auth", "token"]).output() {
+        Ok(output) if output.status.success() => {
+            let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if token.is_empty() {
+                bail!("gh auth token returned empty. Run: gh auth login")
+            }
+            Ok(token)
+        }
+        Ok(_) => {
+            // gh exists but not authenticated
+            bail!(
+                "GitHub CLI found but not authenticated.\n\
+                 Run:  gh auth login\n\
+                 Or set GH_TOKEN / GITHUB_TOKEN env var, or use --token flag."
+            )
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            bail!(
+                "No GitHub token found.\n\
+                 Option 1: Install GitHub CLI and run: gh auth login\n\
+                 Option 2: Set GH_TOKEN or GITHUB_TOKEN env var\n\
+                 Option 3: Use --token flag"
+            )
+        }
+        Err(e) => {
+            bail!("Failed to run gh auth token: {e}")
+        }
     }
 }
 
