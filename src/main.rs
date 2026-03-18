@@ -515,6 +515,36 @@ async fn handle_action(
         AppAction::OpenUrl(url) => {
             let _ = open::that(&url);
         }
+        AppAction::RerunWorkflow(repo, run_id) => {
+            let c = client.clone();
+            let t = tx.clone();
+            tokio::spawn(async move {
+                match c.rerun_workflow(&repo, run_id).await {
+                    Ok(()) => {
+                        let _ = t.send(AppEvent::ApiError("Re-run triggered".to_string())).await;
+                    }
+                    Err(e) => {
+                        let _ = t.send(AppEvent::ApiError(format!("rerun: {e}"))).await;
+                    }
+                }
+            });
+        }
+        AppAction::RerunFailed(repo, run_id) => {
+            let c = client.clone();
+            let t = tx.clone();
+            tokio::spawn(async move {
+                match c.rerun_failed_jobs(&repo, run_id).await {
+                    Ok(()) => {
+                        let _ = t
+                            .send(AppEvent::ApiError("Re-run failed jobs triggered".to_string()))
+                            .await;
+                    }
+                    Err(e) => {
+                        let _ = t.send(AppEvent::ApiError(format!("rerun: {e}"))).await;
+                    }
+                }
+            });
+        }
         AppAction::ReposChanged(new_repos) => {
             let _ = repos_tx.send(new_repos);
             app.loading = true;

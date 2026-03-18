@@ -191,6 +191,7 @@ impl App {
             KeyCode::Char('/') => self.input_mode = InputMode::Search,
             KeyCode::Char('f') => self.input_mode = InputMode::Filter,
             KeyCode::Char('r') => return Some(AppAction::ForceRefresh),
+            KeyCode::Char('R') => return self.rerun_selected(),
             KeyCode::Char('a') => {
                 if !self.all_org_repos.is_empty() {
                     self.view = View::RepoPicker;
@@ -293,6 +294,7 @@ impl App {
                 }
             }
             KeyCode::Enter | KeyCode::Char('o') => return self.open_in_browser(),
+            KeyCode::Char('R') => return self.rerun_current(),
             _ => {}
         }
         None
@@ -428,6 +430,28 @@ impl App {
         }
     }
 
+    fn rerun_selected(&self) -> Option<AppAction> {
+        let run = self.selected_run()?;
+        let repo = run.repository.full_name.clone();
+        let run_id = run.id;
+        if run.conclusion == Some(Conclusion::Failure) {
+            Some(AppAction::RerunFailed(repo, run_id))
+        } else {
+            Some(AppAction::RerunWorkflow(repo, run_id))
+        }
+    }
+
+    fn rerun_current(&self) -> Option<AppAction> {
+        let run_id = self.current_run_id?;
+        let run = self.runs.iter().find(|r| r.id == run_id)?;
+        let repo = run.repository.full_name.clone();
+        if run.conclusion == Some(Conclusion::Failure) {
+            Some(AppAction::RerunFailed(repo, run_id))
+        } else {
+            Some(AppAction::RerunWorkflow(repo, run_id))
+        }
+    }
+
     pub fn update_runs(&mut self, runs: Vec<WorkflowRun>, rate_limit: RateLimit) {
         let selected_run_id = self.selected_run().map(|r| r.id);
 
@@ -548,4 +572,6 @@ pub enum AppAction {
     FetchJobs(String, u64),
     OpenUrl(String),
     ReposChanged(Vec<String>),
+    RerunWorkflow(String, u64),
+    RerunFailed(String, u64),
 }

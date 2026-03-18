@@ -114,6 +114,32 @@ impl GithubClient {
         Ok(all_repos)
     }
 
+    pub async fn rerun_workflow(&self, repo: &str, run_id: u64) -> Result<()> {
+        let url =
+            format!("https://api.github.com/repos/{repo}/actions/runs/{run_id}/rerun");
+        let resp = self
+            .client
+            .post(&url)
+            .send()
+            .await
+            .context("rerun workflow")?;
+        resp.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn rerun_failed_jobs(&self, repo: &str, run_id: u64) -> Result<()> {
+        let url =
+            format!("https://api.github.com/repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs");
+        let resp = self
+            .client
+            .post(&url)
+            .send()
+            .await
+            .context("rerun failed jobs")?;
+        resp.error_for_status()?;
+        Ok(())
+    }
+
     pub async fn fetch_jobs(&self, repo: &str, run_id: u64) -> Result<(JobsResponse, RateLimit)> {
         let url =
             format!("https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs");

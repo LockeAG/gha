@@ -103,6 +103,7 @@ Three built-in themes via `--theme`:
 | `f` | Filter mode |
 | `1` - `4` | Quick filter: all / failed / running / success |
 | `a` | Repo picker (toggle org repos) |
+| `R` | Re-run workflow (re-runs failed jobs if run failed) |
 | `r` | Force refresh |
 | `q` / `Ctrl-C` | Quit |
 
@@ -113,6 +114,7 @@ Three built-in themes via `--theme`:
 | `j` / `k` | Scroll jobs/steps |
 | `Ctrl-d` / `Ctrl-u` | Half-page scroll |
 | `o` / `Enter` | Open in browser |
+| `R` | Re-run workflow |
 | `Esc` | Back to dashboard |
 | `q` | Quit |
 
@@ -205,7 +207,7 @@ This is the same access pattern as the `gh` CLI and other GitHub API clients. No
 - [x] Themes (Catppuccin Mocha, Tokyo Night, Tokyo Night Storm)
 - [x] Homebrew tap (`brew install LockeAG/tap/gha`)
 - [x] Prebuilt binaries (macOS arm64/x86_64, Linux x86_64/arm64)
-- [ ] Workflow re-run from TUI
+- [x] Workflow re-run from TUI (`R` key, smart: reruns failed jobs only on failures)
 - [ ] Log streaming for in-progress steps
 - [x] Config file (`~/.config/gha/config.toml`, `gha init`)
 

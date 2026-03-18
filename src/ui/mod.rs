@@ -82,9 +82,10 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         InputMode::Normal => match app.view {
             View::Dashboard => vec![
                 key(" j/k"), lbl(" nav "), key("\u{21B5}"), lbl(" detail "),
-                key("o"), lbl(" open "), key("/"), lbl(" search "),
-                key("f"), lbl(" filter "), key("a"), lbl(" repos "),
-                key("r"), lbl(" refresh "), key("q"), lbl(" quit"),
+                key("o"), lbl(" open "), key("R"), lbl(" rerun "),
+                key("/"), lbl(" search "), key("f"), lbl(" filter "),
+                key("a"), lbl(" repos "), key("r"), lbl(" refresh "),
+                key("q"), lbl(" quit"),
             ],
             View::RepoPicker => vec![
                 key(" j/k"), lbl(" nav "), key("Space"), lbl(" toggle "),
@@ -92,8 +93,8 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
             ],
             View::Detail => vec![
                 key(" j/k"), lbl(" nav "), key("^d/^u"), lbl(" page "),
-                key("o"), lbl(" open "), key("ESC"), lbl(" back "),
-                key("q"), lbl(" quit"),
+                key("o"), lbl(" open "), key("R"), lbl(" rerun "),
+                key("ESC"), lbl(" back "), key("q"), lbl(" quit"),
             ],
         },
     };
