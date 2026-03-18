@@ -8,37 +8,27 @@ use crate::app::App;
 use crate::ui::theme;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
+    let th = theme::t();
+
     if app.loading && app.runs.is_empty() {
         let spinner = theme::SPINNER_FRAMES[app.spinner_frame];
         let loading = Paragraph::new(Line::from(vec![
-            Span::styled(spinner, Style::default().fg(theme::RUNNING_COLOR)),
+            Span::styled(spinner, Style::default().fg(th.running)),
             Span::raw(" Fetching workflow runs..."),
         ]))
         .centered()
-        .style(Style::default().fg(theme::DIM_FG).bg(theme::BG_COLOR))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme::BORDER_COLOR)),
-        );
+        .style(Style::default().fg(th.dim_fg).bg(th.bg))
+        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(th.border)));
         frame.render_widget(loading, area);
         return;
     }
 
     if app.filtered_runs.is_empty() {
-        let msg = if app.runs.is_empty() {
-            "No workflow runs found"
-        } else {
-            "No runs match current filter"
-        };
+        let msg = if app.runs.is_empty() { "No workflow runs found" } else { "No runs match current filter" };
         let empty = Paragraph::new(msg)
             .centered()
-            .style(Style::default().fg(theme::DIM_FG).bg(theme::BG_COLOR))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme::BORDER_COLOR)),
-            );
+            .style(Style::default().fg(th.dim_fg).bg(th.bg))
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(th.border)));
         frame.render_widget(empty, area);
         return;
     }
@@ -47,56 +37,33 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let multi_org = has_multiple_orgs(app);
 
     let (header_cells, widths): (Vec<Cell>, Vec<Constraint>) = if wide {
-        // Wide: status, repo, workflow, branch, event, age, #
         (
             vec![
-                Cell::from(" "),
-                Cell::from("Repo"),
-                Cell::from("Workflow"),
-                Cell::from("Branch"),
-                Cell::from("Event"),
-                Cell::from("  Age"),
-                Cell::from("    #"),
+                Cell::from(" "), Cell::from("Repo"), Cell::from("Workflow"),
+                Cell::from("Branch"), Cell::from("Event"),
+                Cell::from("  Age"), Cell::from("    #"),
             ],
             vec![
-                Constraint::Length(2),
-                Constraint::Fill(2),
-                Constraint::Fill(3),
-                Constraint::Fill(2),
-                Constraint::Length(10),
-                Constraint::Length(6),
-                Constraint::Length(6),
+                Constraint::Length(2), Constraint::Fill(2), Constraint::Fill(3),
+                Constraint::Fill(2), Constraint::Length(10),
+                Constraint::Length(6), Constraint::Length(6),
             ],
         )
     } else {
-        // Compact: status, repo, workflow, branch, age, #
         (
             vec![
-                Cell::from(" "),
-                Cell::from("Repo"),
-                Cell::from("Workflow"),
-                Cell::from("Branch"),
-                Cell::from("  Age"),
-                Cell::from("    #"),
+                Cell::from(" "), Cell::from("Repo"), Cell::from("Workflow"),
+                Cell::from("Branch"), Cell::from("  Age"), Cell::from("    #"),
             ],
             vec![
-                Constraint::Length(2),
-                Constraint::Fill(2),
-                Constraint::Fill(3),
-                Constraint::Fill(2),
-                Constraint::Length(6),
-                Constraint::Length(6),
+                Constraint::Length(2), Constraint::Fill(2), Constraint::Fill(3),
+                Constraint::Fill(2), Constraint::Length(6), Constraint::Length(6),
             ],
         )
     };
 
     let header = Row::new(header_cells)
-        .style(
-            Style::default()
-                .fg(theme::DIM_FG)
-                .bg(theme::BG_COLOR)
-                .add_modifier(Modifier::BOLD),
-        )
+        .style(Style::default().fg(th.dim_fg).bg(th.bg).add_modifier(Modifier::BOLD))
         .height(1);
 
     let rows: Vec<Row> = app
@@ -106,11 +73,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         .map(|(i, &idx)| {
             let run = &app.runs[idx];
             let (icon, color) = theme::status_icon(run.status, run.conclusion, app.spinner_frame);
-            let row_bg = if i % 2 == 0 {
-                theme::BG_COLOR
-            } else {
-                theme::ALT_ROW_BG
-            };
+            let row_bg = if i % 2 == 0 { th.bg } else { th.alt_row_bg };
 
             let repo_display = if multi_org {
                 run.repository.full_name.as_str()
@@ -123,35 +86,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
             let mut cells = vec![
                 Cell::from(Span::styled(icon, Style::default().fg(color))),
-                Cell::from(Span::styled(
-                    repo_display,
-                    Style::default().fg(theme::HEADER_FG),
-                )),
-                Cell::from(Span::styled(
-                    run.name.as_deref().unwrap_or("\u{2014}"),
-                    Style::default().fg(color),
-                )),
-                Cell::from(Span::styled(
-                    run.head_branch.as_deref().unwrap_or("\u{2014}"),
-                    Style::default().fg(theme::DIM_FG),
-                )),
+                Cell::from(Span::styled(repo_display, Style::default().fg(th.header_fg))),
+                Cell::from(Span::styled(run.name.as_deref().unwrap_or("\u{2014}"), Style::default().fg(color))),
+                Cell::from(Span::styled(run.head_branch.as_deref().unwrap_or("\u{2014}"), Style::default().fg(th.dim_fg))),
             ];
 
             if wide {
-                cells.push(Cell::from(Span::styled(
-                    short_event(&run.event),
-                    Style::default().fg(theme::DIM_FG),
-                )));
+                cells.push(Cell::from(Span::styled(short_event(&run.event), Style::default().fg(th.dim_fg))));
             }
 
-            cells.push(Cell::from(Span::styled(
-                format!("{age:>5}"),
-                Style::default().fg(theme::DIM_FG),
-            )));
-            cells.push(Cell::from(Span::styled(
-                format!("{run_num:>5}"),
-                Style::default().fg(theme::DIM_FG),
-            )));
+            cells.push(Cell::from(Span::styled(format!("{age:>5}"), Style::default().fg(th.dim_fg))));
+            cells.push(Cell::from(Span::styled(format!("{run_num:>5}"), Style::default().fg(th.dim_fg))));
 
             Row::new(cells).style(Style::default().bg(row_bg))
         })
@@ -159,17 +104,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let table = Table::new(rows, widths)
         .header(header)
-        .row_highlight_style(
-            Style::default()
-                .bg(theme::SELECTED_BG)
-                .add_modifier(Modifier::BOLD),
-        )
+        .row_highlight_style(Style::default().bg(th.selected_bg).add_modifier(Modifier::BOLD))
         .highlight_symbol("\u{25B8} ")
-        .block(
-            Block::default()
-                .borders(Borders::NONE)
-                .style(Style::default().bg(theme::BG_COLOR)),
-        );
+        .block(Block::default().borders(Borders::NONE).style(Style::default().bg(th.bg)));
 
     frame.render_stateful_widget(table, area, &mut app.table_state);
 }
@@ -195,7 +132,5 @@ fn has_multiple_orgs(app: &App) -> bool {
         return false;
     }
     let first_org = app.repos[0].split('/').next();
-    app.repos
-        .iter()
-        .any(|r| r.split('/').next() != first_org)
+    app.repos.iter().any(|r| r.split('/').next() != first_org)
 }

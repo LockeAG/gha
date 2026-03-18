@@ -2,7 +2,7 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
@@ -57,6 +57,14 @@ struct Cli {
 
     #[arg(long, default_value = "30", help = "Poll interval in seconds (min 10)")]
     interval: u64,
+
+    #[arg(
+        long,
+        global = true,
+        default_value = "catppuccin-mocha",
+        help = "Color theme: catppuccin-mocha, tokyo-night, tokyo-night-storm"
+    )]
+    theme: String,
 }
 
 #[derive(Subcommand)]
@@ -209,6 +217,8 @@ async fn resolve_repos(cli: &Cli, client: &GithubClient) -> Result<(Vec<String>,
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    ui::theme::init(&cli.theme);
 
     let token = resolve_token(cli.token.clone())?;
     let client = GithubClient::new(&token, cli.per_page)?;

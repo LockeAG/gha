@@ -143,7 +143,7 @@ fn run_fzf(lines: &[String], label: &str) -> Result<String> {
             "--reverse",
             "--no-multi",
             &format!("--header=Select a {label}"),
-            "--color=bg+:#313244,fg+:#cdd6f4,hl:#f38ba8,hl+:#f38ba8,pointer:#cba6f7,info:#585b70,border:#585b70",
+            &format!("--color={}", theme::t().fzf_colors),
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

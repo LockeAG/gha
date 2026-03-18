@@ -16,14 +16,13 @@ const MIN_WIDTH: u16 = 50;
 const MIN_HEIGHT: u16 = 8;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
+    let th = theme::t();
     let area = frame.area();
 
-    // Fill background
     Block::default()
-        .style(Style::default().bg(theme::BG_COLOR))
+        .style(Style::default().bg(th.bg))
         .render(area, frame.buffer_mut());
 
-    // Terminal size guard
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         render_too_small(frame, area);
         return;
@@ -38,7 +37,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ])
         .split(area);
 
-    // Track visible content rows for PageUp/PageDown
     app.visible_rows = chunks[1].height.saturating_sub(2) as usize;
 
     header::render(frame, chunks[0], app);
@@ -53,89 +51,54 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_too_small(frame: &mut Frame, area: Rect) {
+    let th = theme::t();
     let msg = Paragraph::new(Line::from(vec![
-        Span::styled("gha", Style::default().fg(theme::HEADER_FG)),
+        Span::styled("gha", Style::default().fg(th.header_fg)),
         Span::styled(
             format!(" needs {}x{}", MIN_WIDTH, MIN_HEIGHT),
-            Style::default().fg(theme::DIM_FG),
+            Style::default().fg(th.dim_fg),
         ),
     ]))
     .centered()
-    .style(Style::default().bg(theme::BG_COLOR));
+    .style(Style::default().bg(th.bg));
     frame.render_widget(msg, area);
 }
 
 fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let help = match app.input_mode {
+    let th = theme::t();
+    let key = |s: &'static str| Span::styled(s, Style::default().fg(th.header_fg));
+    let lbl = |s: &'static str| Span::styled(s, Style::default().fg(th.dim_fg));
+
+    let help: Vec<Span> = match app.input_mode {
         InputMode::Search => vec![
-            Span::styled(" ESC", Style::default().fg(theme::HEADER_FG)),
-            Span::styled(" cancel ", Style::default().fg(theme::DIM_FG)),
-            Span::styled("ENTER", Style::default().fg(theme::HEADER_FG)),
-            Span::styled(" confirm", Style::default().fg(theme::DIM_FG)),
+            key(" ESC"), lbl(" cancel "), key("ENTER"), lbl(" confirm"),
         ],
         InputMode::Filter => vec![
-            Span::styled(
-                " FILTER ",
-                Style::default()
-                    .fg(theme::BG_COLOR)
-                    .bg(theme::RUNNING_COLOR),
-            ),
-            Span::styled(" 1", Style::default().fg(theme::HEADER_FG)),
-            Span::styled(" all ", Style::default().fg(theme::DIM_FG)),
-            Span::styled("2", Style::default().fg(theme::HEADER_FG)),
-            Span::styled(" fail ", Style::default().fg(theme::DIM_FG)),
-            Span::styled("3", Style::default().fg(theme::HEADER_FG)),
-            Span::styled(" run ", Style::default().fg(theme::DIM_FG)),
-            Span::styled("4", Style::default().fg(theme::HEADER_FG)),
-            Span::styled(" pass ", Style::default().fg(theme::DIM_FG)),
-            Span::styled("ESC", Style::default().fg(theme::HEADER_FG)),
-            Span::styled(" close", Style::default().fg(theme::DIM_FG)),
+            Span::styled(" FILTER ", Style::default().fg(th.bg).bg(th.running)),
+            key(" 1"), lbl(" all "), key("2"), lbl(" fail "),
+            key("3"), lbl(" run "), key("4"), lbl(" pass "),
+            key("ESC"), lbl(" close"),
         ],
         InputMode::Normal => match app.view {
             View::Dashboard => vec![
-                Span::styled(" j/k", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" nav ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("\u{21B5}", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" detail ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("o", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" open ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("/", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" search ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("f", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" filter ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("a", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" repos ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("r", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" refresh ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("q", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" quit", Style::default().fg(theme::DIM_FG)),
+                key(" j/k"), lbl(" nav "), key("\u{21B5}"), lbl(" detail "),
+                key("o"), lbl(" open "), key("/"), lbl(" search "),
+                key("f"), lbl(" filter "), key("a"), lbl(" repos "),
+                key("r"), lbl(" refresh "), key("q"), lbl(" quit"),
             ],
             View::RepoPicker => vec![
-                Span::styled(" j/k", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" nav ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("Space", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" toggle ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("ESC", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" apply ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("q", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" quit", Style::default().fg(theme::DIM_FG)),
+                key(" j/k"), lbl(" nav "), key("Space"), lbl(" toggle "),
+                key("ESC"), lbl(" apply "), key("q"), lbl(" quit"),
             ],
             View::Detail => vec![
-                Span::styled(" j/k", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" nav ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("^d/^u", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" page ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("o", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" open ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("ESC", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" back ", Style::default().fg(theme::DIM_FG)),
-                Span::styled("q", Style::default().fg(theme::HEADER_FG)),
-                Span::styled(" quit", Style::default().fg(theme::DIM_FG)),
+                key(" j/k"), lbl(" nav "), key("^d/^u"), lbl(" page "),
+                key("o"), lbl(" open "), key("ESC"), lbl(" back "),
+                key("q"), lbl(" quit"),
             ],
         },
     };
 
     let footer = Paragraph::new(Line::from(help))
-        .style(Style::default().fg(theme::DIM_FG).bg(theme::BG_COLOR));
+        .style(Style::default().fg(th.dim_fg).bg(th.bg));
     frame.render_widget(footer, area);
 }
