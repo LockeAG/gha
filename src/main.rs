@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -15,6 +15,7 @@ use tokio::sync::{mpsc, watch};
 
 mod app;
 mod events;
+mod fzf;
 mod github;
 mod models;
 mod ui;
@@ -27,23 +28,60 @@ use models::RepoInfo;
 #[derive(Parser)]
 #[command(name = "gha", about = "GitHub Actions TUI tracker")]
 struct Cli {
-    #[arg(long, help = "Watch all repos in an org (repeatable)")]
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    #[arg(long, global = true, help = "Watch all repos in an org (repeatable)")]
     org: Vec<String>,
 
-    #[arg(long, help = "Watch specific repo owner/name (repeatable)")]
+    #[arg(long, global = true, help = "Watch specific repo owner/name (repeatable)")]
     repo: Vec<String>,
+
+    #[arg(long, global = true, default_value = "20", help = "Max runs per repo")]
+    per_page: u8,
+
+    #[arg(
+        long,
+        global = true,
+        default_value = "7",
+        help = "Only watch repos active in last N days (0 = all)"
+    )]
+    days: u64,
+
+    #[arg(
+        long,
+        global = true,
+        help = "GitHub token (or GH_TOKEN/GITHUB_TOKEN env, or gh auth token)"
+    )]
+    token: Option<String>,
 
     #[arg(long, default_value = "30", help = "Poll interval in seconds (min 10)")]
     interval: u64,
+}
 
-    #[arg(long, default_value = "20", help = "Max runs per repo")]
-    per_page: u8,
+#[derive(Subcommand)]
+enum Command {
+    /// fzf picker for tmux popups
+    Fzf {
+        #[command(subcommand)]
+        mode: FzfMode,
+    },
+}
 
-    #[arg(long, default_value = "7", help = "Only watch repos active in last N days (0 = all)")]
-    days: u64,
-
-    #[arg(long, help = "GitHub token (or GH_TOKEN/GITHUB_TOKEN env, or gh auth token)")]
-    token: Option<String>,
+#[derive(Subcommand)]
+enum FzfMode {
+    /// Pick a workflow run
+    Runs {
+        /// Action on selection: open (default), url, id
+        #[arg(long, default_value = "open")]
+        action: String,
+    },
+    /// Pick a repo
+    Repos {
+        /// Action on selection: name (default)
+        #[arg(long, default_value = "name")]
+        action: String,
+    },
 }
 
 fn resolve_token(cli_token: Option<String>) -> Result<String> {
@@ -103,12 +141,7 @@ fn filter_active_repos(repos: &[RepoInfo], days: u64) -> Vec<String> {
     let cutoff = chrono::Utc::now() - chrono::Duration::days(days as i64);
     repos
         .iter()
-        .filter(|r| {
-            !r.archived
-                && r.pushed_at
-                    .map(|t| t > cutoff)
-                    .unwrap_or(false)
-        })
+        .filter(|r| !r.archived && r.pushed_at.map(|t| t > cutoff).unwrap_or(false))
         .map(|r| r.full_name.clone())
         .collect()
 }
@@ -122,15 +155,8 @@ fn install_panic_hook() {
     }));
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let interval = cli.interval.max(10);
-
-    let token = resolve_token(cli.token)?;
-    let client = GithubClient::new(&token, cli.per_page)?;
-
-    let explicit_repos: Vec<String> = cli.repo;
+async fn resolve_repos(cli: &Cli, client: &GithubClient) -> Result<(Vec<String>, Vec<String>, Vec<RepoInfo>)> {
+    let explicit_repos: Vec<String> = cli.repo.clone();
     let mut all_org_repos: Vec<RepoInfo> = Vec::new();
 
     for org in &cli.org {
@@ -140,10 +166,8 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Sort all org repos by pushed_at (most recent first)
     all_org_repos.sort_by(|a, b| b.pushed_at.cmp(&a.pushed_at));
 
-    // Active repos = explicit + recently active org repos
     let active_org_repos = filter_active_repos(&all_org_repos, cli.days);
     let mut watched: Vec<String> = explicit_repos.clone();
     for r in &active_org_repos {
@@ -160,14 +184,39 @@ async fn main() -> Result<()> {
         }
     }
 
-    if !all_org_repos.is_empty() && !active_org_repos.is_empty() {
-        let total = all_org_repos.len();
-        let active = active_org_repos.len();
-        eprintln!(
-            "Watching {active} of {total} org repos (active in last {}d). Press 'a' to manage.",
-            cli.days
-        );
+    Ok((watched, explicit_repos, all_org_repos))
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    let token = resolve_token(cli.token.clone())?;
+    let client = GithubClient::new(&token, cli.per_page)?;
+
+    match &cli.command {
+        Some(Command::Fzf { mode }) => {
+            let (watched, _, _all_org_repos) = resolve_repos(&cli, &client).await?;
+            match mode {
+                FzfMode::Runs { action } => {
+                    fzf::pick_run(&client, &watched, action).await?;
+                }
+                FzfMode::Repos { action } => {
+                    fzf::pick_repo(&client, &cli.org, action).await?;
+                }
+            }
+        }
+        None => {
+            run_tui(cli, client).await?;
+        }
     }
+
+    Ok(())
+}
+
+async fn run_tui(cli: Cli, client: GithubClient) -> Result<()> {
+    let interval = cli.interval.max(10);
+    let (watched, explicit_repos, all_org_repos) = resolve_repos(&cli, &client).await?;
 
     install_panic_hook();
 
@@ -210,7 +259,6 @@ async fn run_app(
     let mut app = App::new(watched.clone(), explicit, all_org_repos);
     let client = Arc::new(client);
 
-    // Watch channel for repo list — poller reads current value each cycle
     let (repos_tx, repos_rx) = watch::channel(watched);
 
     // Input task
@@ -239,7 +287,7 @@ async fn run_app(
         }
     });
 
-    // Poller task — reads repo list from watch channel each cycle
+    // Poller task
     let tx_poll = tx.clone();
     let client_poll = client.clone();
     tokio::spawn(async move {
@@ -354,9 +402,7 @@ async fn handle_action(
             let _ = open::that(&url);
         }
         AppAction::ReposChanged(new_repos) => {
-            // Update the poller's repo list via watch channel
             let _ = repos_tx.send(new_repos);
-            // Trigger immediate refresh
             app.loading = true;
             let c = client.clone();
             let t = tx.clone();
