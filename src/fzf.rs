@@ -48,14 +48,14 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
         loop {
             let selection = match run_fzf_tabbed(&lines, &header, 6) {
                 Ok(s) => s,
-                Err(_) => return Ok(()),
+                Err(_) => return Ok(()), // Esc at run list = exit
             };
-            let run_idx = extract_field(&selection, 0)
-                .and_then(|s| strip_ansi(&s).trim().parse::<usize>().ok());
+            let run_idx = extract_hidden_index(&selection);
             if let Some(run) = run_idx.and_then(|i| all_runs.get(i)) {
                 match show_detail(client, run).await {
-                    Ok(()) => return Ok(()),
-                    Err(_) => continue,
+                    Ok(()) => return Ok(()), // opened in browser
+                    Err(e) if e.to_string() == "fzf cancelled" => continue, // Esc = back
+                    Err(e) => return Err(e), // real error
                 }
             }
         }
@@ -327,6 +327,14 @@ fn format_duration(
 
 fn extract_field<'a>(line: &'a str, idx: usize) -> Option<&'a str> {
     line.split('\t').nth(idx)
+}
+
+fn extract_hidden_index(line: &str) -> Option<usize> {
+    // Index is between ANSI conceal markers: \x1b[8m{idx}\x1b[0m
+    let start = line.find("\x1b[8m")?;
+    let after = &line[start + 4..];
+    let end = after.find('\x1b')?;
+    after[..end].trim().parse().ok()
 }
 
 fn truncate(s: &str, max: usize) -> String {
