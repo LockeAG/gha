@@ -61,6 +61,23 @@ Checked in order:
 3. `GITHUB_TOKEN` env
 4. `gh auth token` (GitHub CLI)
 
+### Config file
+
+```sh
+gha init  # creates ~/.config/gha/config.toml
+```
+
+```toml
+# ~/.config/gha/config.toml
+theme = "tokyo-night"
+interval = 15
+days = 7
+orgs = ["DreamsEngine"]
+repos = ["LockeAG/gha"]
+```
+
+CLI flags override config values. Respects `XDG_CONFIG_HOME`. Stow-friendly.
+
 ### Themes
 
 Three built-in themes via `--theme`:
@@ -190,7 +207,7 @@ This is the same access pattern as the `gh` CLI and other GitHub API clients. No
 - [x] Prebuilt binaries (macOS arm64/x86_64, Linux x86_64/arm64)
 - [ ] Workflow re-run from TUI
 - [ ] Log streaming for in-progress steps
-- [ ] `~/.config/gha/config.toml` for default orgs/repos
+- [x] Config file (`~/.config/gha/config.toml`, `gha init`)
 
 ## License
 

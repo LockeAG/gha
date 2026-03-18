@@ -14,6 +14,7 @@ use ratatui::Terminal;
 use tokio::sync::{mpsc, watch};
 
 mod app;
+mod config;
 mod events;
 mod fzf;
 mod github;
@@ -21,6 +22,7 @@ mod models;
 mod ui;
 
 use app::{App, AppAction};
+use config::Config;
 use events::AppEvent;
 use github::GithubClient;
 use models::RepoInfo;
@@ -37,34 +39,59 @@ struct Cli {
     #[arg(long, global = true, help = "Watch specific repo owner/name (repeatable)")]
     repo: Vec<String>,
 
-    #[arg(long, global = true, default_value = "20", help = "Max runs per repo")]
-    per_page: u8,
+    #[arg(long, global = true, help = "Max runs per repo")]
+    per_page: Option<u8>,
 
-    #[arg(
-        long,
-        global = true,
-        default_value = "7",
-        help = "Only watch repos active in last N days (0 = all)"
-    )]
-    days: u64,
+    #[arg(long, global = true, help = "Only watch repos active in last N days (0 = all)")]
+    days: Option<u64>,
 
-    #[arg(
-        long,
-        global = true,
-        help = "GitHub token (or GH_TOKEN/GITHUB_TOKEN env, or gh auth token)"
-    )]
+    #[arg(long, global = true, help = "GitHub token (or GH_TOKEN/GITHUB_TOKEN env, or gh auth token)")]
     token: Option<String>,
 
-    #[arg(long, default_value = "30", help = "Poll interval in seconds (min 10)")]
-    interval: u64,
+    #[arg(long, help = "Poll interval in seconds (min 10)")]
+    interval: Option<u64>,
 
-    #[arg(
-        long,
-        global = true,
-        default_value = "catppuccin-mocha",
-        help = "Color theme: catppuccin-mocha, tokyo-night, tokyo-night-storm"
-    )]
+    #[arg(long, global = true, help = "Color theme: catppuccin-mocha, tokyo-night, tokyo-night-storm")]
+    theme: Option<String>,
+}
+
+/// Resolved settings after merging CLI > config > defaults
+struct Settings {
+    orgs: Vec<String>,
+    repos: Vec<String>,
+    per_page: u8,
+    days: u64,
+    interval: u64,
     theme: String,
+    token: Option<String>,
+}
+
+impl Settings {
+    fn from(cli: &Cli, cfg: &Config) -> Self {
+        let mut orgs = cli.org.clone();
+        if orgs.is_empty() {
+            orgs = cfg.orgs.clone();
+        }
+
+        let mut repos = cli.repo.clone();
+        if repos.is_empty() {
+            repos = cfg.repos.clone();
+        }
+
+        Self {
+            orgs,
+            repos,
+            per_page: cli.per_page.or(cfg.per_page).unwrap_or(20),
+            days: cli.days.or(cfg.days).unwrap_or(7),
+            interval: cli.interval.or(cfg.interval).unwrap_or(30),
+            theme: cli
+                .theme
+                .clone()
+                .or_else(|| cfg.theme.clone())
+                .unwrap_or_else(|| "catppuccin-mocha".to_string()),
+            token: cli.token.clone(),
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -74,6 +101,8 @@ enum Command {
         #[command(subcommand)]
         mode: FzfMode,
     },
+    /// Generate sample config at ~/.config/gha/config.toml
+    Init,
 }
 
 #[derive(Subcommand)]
@@ -110,25 +139,18 @@ fn resolve_token(cli_token: Option<String>) -> Result<String> {
             }
             Ok(token)
         }
-        Ok(_) => {
-            // gh exists but not authenticated
-            bail!(
-                "GitHub CLI found but not authenticated.\n\
-                 Run:  gh auth login\n\
-                 Or set GH_TOKEN / GITHUB_TOKEN env var, or use --token flag."
-            )
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            bail!(
-                "No GitHub token found.\n\
-                 Option 1: Install GitHub CLI and run: gh auth login\n\
-                 Option 2: Set GH_TOKEN or GITHUB_TOKEN env var\n\
-                 Option 3: Use --token flag"
-            )
-        }
-        Err(e) => {
-            bail!("Failed to run gh auth token: {e}")
-        }
+        Ok(_) => bail!(
+            "GitHub CLI found but not authenticated.\n\
+             Run:  gh auth login\n\
+             Or set GH_TOKEN / GITHUB_TOKEN env var, or use --token flag."
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => bail!(
+            "No GitHub token found.\n\
+             Option 1: Install GitHub CLI and run: gh auth login\n\
+             Option 2: Set GH_TOKEN or GITHUB_TOKEN env var\n\
+             Option 3: Use --token flag"
+        ),
+        Err(e) => bail!("Failed to run gh auth token: {e}"),
     }
 }
 
@@ -182,11 +204,14 @@ fn install_panic_hook() {
     }));
 }
 
-async fn resolve_repos(cli: &Cli, client: &GithubClient) -> Result<(Vec<String>, Vec<String>, Vec<RepoInfo>)> {
-    let explicit_repos: Vec<String> = cli.repo.clone();
+async fn resolve_repos(
+    settings: &Settings,
+    client: &GithubClient,
+) -> Result<(Vec<String>, Vec<String>, Vec<RepoInfo>)> {
+    let explicit_repos: Vec<String> = settings.repos.clone();
     let mut all_org_repos: Vec<RepoInfo> = Vec::new();
 
-    for org in &cli.org {
+    for org in &settings.orgs {
         match client.fetch_org_repos(org).await {
             Ok(repos) => all_org_repos.extend(repos),
             Err(e) => bail!("Failed to fetch repos for org '{org}': {e}"),
@@ -195,7 +220,7 @@ async fn resolve_repos(cli: &Cli, client: &GithubClient) -> Result<(Vec<String>,
 
     all_org_repos.sort_by(|a, b| b.pushed_at.cmp(&a.pushed_at));
 
-    let active_org_repos = filter_active_repos(&all_org_repos, cli.days);
+    let active_org_repos = filter_active_repos(&all_org_repos, settings.days);
     let mut watched: Vec<String> = explicit_repos.clone();
     for r in &active_org_repos {
         if !watched.contains(r) {
@@ -207,7 +232,7 @@ async fn resolve_repos(cli: &Cli, client: &GithubClient) -> Result<(Vec<String>,
         if let Some(repo) = resolve_repo_from_git() {
             watched.push(repo);
         } else {
-            bail!("No repos specified. Use --repo, --org, or run from a git repo.");
+            bail!("No repos specified. Use --repo, --org, config file, or run from a git repo.");
         }
     }
 
@@ -217,63 +242,78 @@ async fn resolve_repos(cli: &Cli, client: &GithubClient) -> Result<(Vec<String>,
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let cfg = Config::load();
+    let settings = Settings::from(&cli, &cfg);
 
-    ui::theme::init(&cli.theme);
+    // Handle init subcommand before anything else
+    if let Some(Command::Init) = &cli.command {
+        let path = config::config_path();
+        if path.exists() {
+            println!("Config already exists: {}", path.display());
+        } else {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, config::generate_sample())?;
+            println!("Created: {}", path.display());
+        }
+        return Ok(());
+    }
 
-    let token = resolve_token(cli.token.clone())?;
-    let client = GithubClient::new(&token, cli.per_page)?;
+    ui::theme::init(&settings.theme);
+
+    let token = resolve_token(settings.token.clone())?;
+    let client = GithubClient::new(&token, settings.per_page)?;
 
     match &cli.command {
         Some(Command::Fzf { mode }) => {
-            let (watched, _, _all_org_repos) = resolve_repos(&cli, &client).await?;
+            let (watched, _, _) = resolve_repos(&settings, &client).await?;
             match mode {
                 FzfMode::Runs { action } => {
                     fzf::pick_run(&client, &watched, action).await?;
                 }
                 FzfMode::Repos { action } => {
-                    fzf::pick_repo(&client, &cli.org, action).await?;
+                    fzf::pick_repo(&client, &settings.orgs, action).await?;
                 }
             }
         }
+        Some(Command::Init) => unreachable!(),
         None => {
-            run_tui(cli, client).await?;
+            let interval = settings.interval.max(10);
+            let (watched, explicit_repos, all_org_repos) =
+                resolve_repos(&settings, &client).await?;
+
+            install_panic_hook();
+
+            enable_raw_mode()?;
+            let mut stdout = io::stdout();
+            execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+            let backend = CrosstermBackend::new(stdout);
+            let mut terminal = Terminal::new(backend)?;
+
+            let result = run_app(
+                &mut terminal,
+                watched,
+                explicit_repos,
+                all_org_repos,
+                client,
+                interval,
+            )
+            .await;
+
+            disable_raw_mode()?;
+            execute!(
+                terminal.backend_mut(),
+                LeaveAlternateScreen,
+                DisableMouseCapture
+            )?;
+            terminal.show_cursor()?;
+
+            result?;
         }
     }
 
     Ok(())
-}
-
-async fn run_tui(cli: Cli, client: GithubClient) -> Result<()> {
-    let interval = cli.interval.max(10);
-    let (watched, explicit_repos, all_org_repos) = resolve_repos(&cli, &client).await?;
-
-    install_panic_hook();
-
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    let result = run_app(
-        &mut terminal,
-        watched,
-        explicit_repos,
-        all_org_repos,
-        client,
-        interval,
-    )
-    .await;
-
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-
-    result
 }
 
 async fn run_app(
@@ -290,7 +330,6 @@ async fn run_app(
 
     let (repos_tx, repos_rx) = watch::channel(watched);
 
-    // Input task
     let tx_input = tx.clone();
     tokio::task::spawn_blocking(move || loop {
         if event::poll(Duration::from_millis(50)).unwrap_or(false) {
@@ -304,7 +343,6 @@ async fn run_app(
         }
     });
 
-    // Tick task
     let tx_tick = tx.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_millis(250));
@@ -316,7 +354,6 @@ async fn run_app(
         }
     });
 
-    // Poller task
     let tx_poll = tx.clone();
     let client_poll = client.clone();
     tokio::spawn(async move {
