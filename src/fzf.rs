@@ -40,6 +40,7 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
         .map(|(i, run)| format_run_line(i, run))
         .collect();
 
+    // Fields: 1=icon+repo | 2=workflow | 3=branch | 4=age | 5=#num | 6=URL | 7=index
     let header = format!(
         "  {DIM}Repo{RESET}{TAB}{DIM}Workflow{RESET}{TAB}{DIM}Branch{RESET}{TAB}{DIM}  Age{RESET}{TAB}{DIM}    #{RESET}"
     );
@@ -50,7 +51,9 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
                 Ok(s) => s,
                 Err(_) => return Ok(()), // Esc at run list = exit
             };
-            let run_idx = extract_hidden_index(&selection);
+            // Index is the last tab field (field 6, 0-indexed)
+            let run_idx = extract_field(&selection, 6)
+                .and_then(|s| s.trim().parse::<usize>().ok());
             if let Some(run) = run_idx.and_then(|i| all_runs.get(i)) {
                 match show_detail(client, run).await {
                     Ok(()) => return Ok(()), // opened in browser
@@ -65,17 +68,17 @@ pub async fn pick_run(client: &GithubClient, repos: &[String], action: &str) -> 
 
     match action {
         "url" => {
-            if let Some(url) = extract_field(&selection, 6) {
+            if let Some(url) = extract_field(&selection, 5) {
                 println!("{}", url.trim());
             }
         }
         "id" => {
-            if let Some(num) = extract_field(&selection, 5) {
+            if let Some(num) = extract_field(&selection, 4) {
                 println!("{}", strip_ansi(&num).trim().trim_start_matches('#'));
             }
         }
         _ => {
-            if let Some(url) = extract_field(&selection, 6) {
+            if let Some(url) = extract_field(&selection, 5) {
                 open::that(url.trim())?;
             }
         }
@@ -214,8 +217,10 @@ fn format_run_line(idx: usize, run: &WorkflowRun) -> String {
     let age = theme::format_relative_time(run.updated_at);
     let num = format!("#{}", run.run_number);
 
+    // Fields: icon | repo | workflow | branch | age | #num | URL | index
+    // --with-nth=1..7 shows fields 1-6 (icon through #num), hides URL and index
     format!(
-        "\x1b[8m{idx}\x1b[0m {icon}{TAB}{WHITE}{repo}{RESET}{TAB}{name}{TAB}{DIM}{branch}{RESET}{TAB}{DIM}{age:>5}{RESET}{TAB}{DIM}{num:>5}{RESET}{TAB}{url}",
+        "{icon} {WHITE}{repo}{RESET}{TAB}{name}{TAB}{DIM}{branch}{RESET}{TAB}{DIM}{age:>5}{RESET}{TAB}{DIM}{num:>5}{RESET}{TAB}{url}{TAB}{idx}",
         url = run.html_url,
     )
 }
@@ -327,14 +332,6 @@ fn format_duration(
 
 fn extract_field<'a>(line: &'a str, idx: usize) -> Option<&'a str> {
     line.split('\t').nth(idx)
-}
-
-fn extract_hidden_index(line: &str) -> Option<usize> {
-    // Index is between ANSI conceal markers: \x1b[8m{idx}\x1b[0m
-    let start = line.find("\x1b[8m")?;
-    let after = &line[start + 4..];
-    let end = after.find('\x1b')?;
-    after[..end].trim().parse().ok()
 }
 
 fn truncate(s: &str, max: usize) -> String {
