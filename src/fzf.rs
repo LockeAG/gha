@@ -98,9 +98,9 @@ async fn show_detail(client: &GithubClient, run: &WorkflowRun) -> Result<()> {
     for job in &jobs_resp.jobs {
         let icon = status_ansi(job.status, job.conclusion);
         let dur = format_duration(job.started_at, job.completed_at);
+        let jname = truncate(&job.name, 38);
         lines.push(format!(
-            " {icon}{TAB}{BOLD}{WHITE}{name}{RESET}{TAB}{DIM}{dur:>8}{RESET}{TAB}{url}",
-            name = job.name,
+            " {icon}{TAB}{BOLD}{WHITE}{jname}{RESET}{TAB}{DIM}{dur:>8}{RESET}{TAB}{url}",
             url = job.html_url,
         ));
 
@@ -114,9 +114,9 @@ async fn show_detail(client: &GithubClient, run: &WorkflowRun) -> Result<()> {
                 } else {
                     "\u{251C}\u{2500}"
                 };
+                let sname = truncate(&step.name, 36);
                 lines.push(format!(
-                    " {DIM}{tree}{RESET} {s_icon}{TAB}{name}{TAB}{DIM}{dur:>8}{RESET}{TAB}{url}",
-                    name = step.name,
+                    " {DIM}{tree}{RESET} {s_icon}{TAB}{sname}{TAB}{DIM}{dur:>8}{RESET}{TAB}{url}",
                     dur = s_dur,
                     url = job.html_url,
                 ));
@@ -181,9 +181,9 @@ pub async fn pick_repo(client: &GithubClient, orgs: &[String], action: &str) -> 
             } else {
                 String::new()
             };
+            let rname = truncate(&repo.full_name, 30);
             format!(
-                "{WHITE}{name}{RESET}{tag}{TAB}{DIM}{age:>5} ago{RESET}{TAB}{DIM}{desc}{RESET}",
-                name = repo.full_name,
+                "{WHITE}{rname}{RESET}{tag}{TAB}{DIM}{age:>5} ago{RESET}{TAB}{DIM}{desc}{RESET}",
             )
         })
         .collect();
@@ -201,24 +201,19 @@ pub async fn pick_repo(client: &GithubClient, orgs: &[String], action: &str) -> 
 
 fn format_run_line(idx: usize, run: &WorkflowRun) -> String {
     let icon = status_ansi(run.status, run.conclusion);
-    let repo = run
-        .repository
-        .full_name
-        .split('/')
-        .last()
-        .unwrap_or(&run.repository.full_name);
-    let name = run.name.as_deref().unwrap_or("\u{2014}");
-    let branch = run.head_branch.as_deref().unwrap_or("\u{2014}");
+    let repo = truncate(
+        run.repository
+            .full_name
+            .split('/')
+            .last()
+            .unwrap_or(&run.repository.full_name),
+        18,
+    );
+    let name = truncate(run.name.as_deref().unwrap_or("\u{2014}"), 24);
+    let branch = truncate(run.head_branch.as_deref().unwrap_or("\u{2014}"), 16);
     let age = theme::format_relative_time(run.updated_at);
     let num = format!("#{}", run.run_number);
 
-    // Field 0: hidden index + icon (display)
-    // Field 1: repo
-    // Field 2: workflow
-    // Field 3: branch
-    // Field 4: age
-    // Field 5: #num
-    // Field 6: URL (hidden from display)
     format!(
         "\x1b[8m{idx}\x1b[0m {icon}{TAB}{WHITE}{repo}{RESET}{TAB}{name}{TAB}{DIM}{branch}{RESET}{TAB}{DIM}{age:>5}{RESET}{TAB}{DIM}{num:>5}{RESET}{TAB}{url}",
         url = run.html_url,
@@ -332,6 +327,18 @@ fn format_duration(
 
 fn extract_field<'a>(line: &'a str, idx: usize) -> Option<&'a str> {
     line.split('\t').nth(idx)
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max.saturating_sub(1);
+    // Don't split mid-char
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\u{2026}", &s[..end])
 }
 
 fn strip_ansi(s: &str) -> String {
