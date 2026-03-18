@@ -60,9 +60,18 @@ impl GithubClient {
         Ok((body, rl))
     }
 
-    pub async fn fetch_org_repos(&self, org: &str) -> Result<Vec<RepoInfo>> {
-        let url = format!("https://api.github.com/orgs/{org}/repos?per_page=100&sort=pushed");
-        let resp = self.client.get(&url).send().await?;
+    pub async fn fetch_org_repos(&self, owner: &str) -> Result<Vec<RepoInfo>> {
+        // Try org endpoint first, fall back to user endpoint
+        let org_url = format!("https://api.github.com/orgs/{owner}/repos?per_page=100&sort=pushed");
+        let resp = self.client.get(&org_url).send().await?;
+
+        if resp.status().is_success() {
+            let repos: Vec<RepoInfo> = resp.json().await?;
+            return Ok(repos);
+        }
+
+        let user_url = format!("https://api.github.com/users/{owner}/repos?per_page=100&sort=pushed");
+        let resp = self.client.get(&user_url).send().await?;
         let repos: Vec<RepoInfo> = resp.error_for_status()?.json().await?;
         Ok(repos)
     }
