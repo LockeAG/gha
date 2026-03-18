@@ -79,3 +79,83 @@ jobs:
           files: |
             *.tar.gz
             *.sha256
+
+  update-tap:
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download SHA256 files
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          pattern: "*.sha256"
+
+      - name: Read hashes
+        id: hashes
+        run: |
+          echo "aarch64_macos=$(awk '{print $1}' gha-aarch64-apple-darwin.tar.gz.sha256)" >> "$GITHUB_OUTPUT"
+          echo "x86_64_macos=$(awk '{print $1}' gha-x86_64-apple-darwin.tar.gz.sha256)" >> "$GITHUB_OUTPUT"
+          echo "x86_64_linux=$(awk '{print $1}' gha-x86_64-unknown-linux-gnu.tar.gz.sha256)" >> "$GITHUB_OUTPUT"
+          echo "aarch64_linux=$(awk '{print $1}' gha-aarch64-unknown-linux-gnu.tar.gz.sha256)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: LockeAG/homebrew-tap
+          token: ${{ secrets.TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          cat > homebrew-tap/Formula/gha.rb << 'FORMULA'
+          class Gha < Formula
+            desc "GitHub Actions TUI dashboard. Never leave the terminal."
+            homepage "https://github.com/LockeAG/gha"
+            version "${{ steps.version.outputs.version }}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/LockeAG/gha/releases/download/v#{version}/gha-aarch64-apple-darwin.tar.gz"
+                sha256 "${{ steps.hashes.outputs.aarch64_macos }}"
+              else
+                url "https://github.com/LockeAG/gha/releases/download/v#{version}/gha-x86_64-apple-darwin.tar.gz"
+                sha256 "${{ steps.hashes.outputs.x86_64_macos }}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/LockeAG/gha/releases/download/v#{version}/gha-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ steps.hashes.outputs.aarch64_linux }}"
+              else
+                url "https://github.com/LockeAG/gha/releases/download/v#{version}/gha-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${{ steps.hashes.outputs.x86_64_linux }}"
+              end
+            end
+
+            def install
+              bin.install "gha"
+            end
+
+            test do
+              assert_match "GitHub Actions TUI tracker", shell_output("#{bin}/gha --help")
+            end
+          end
+          FORMULA
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' homebrew-tap/Formula/gha.rb
+
+      - name: Push to homebrew-tap
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/gha.rb
+          git commit -m "gha ${{ steps.version.outputs.version }}"
+          git push
