@@ -28,7 +28,7 @@ use github::GithubClient;
 use models::RepoInfo;
 
 #[derive(Parser)]
-#[command(name = "gha", about = "GitHub Actions TUI tracker")]
+#[command(name = "gha", version, about = "GitHub Actions in the terminal")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
