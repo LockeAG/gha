@@ -33,7 +33,7 @@ If you have `gh` CLI authenticated, that's it. No token setup needed.
 
 **Detail view** — drill into a run to see jobs and steps as a tree with durations. `Enter` from dashboard.
 
-**Log viewer** — read job output directly in the terminal. `L` on a completed job. Error lines highlighted red, warnings yellow. Auto-tails to the end.
+**Log viewer** — read job output directly in the terminal. `L` on a completed job. Error lines (`##[error]`, `Error:`, `FAILED`, `panic:`) highlighted red, warnings yellow. GitHub Actions group markers shown in blue. Auto-tails to the end.
 
 **Re-run** — trigger a re-run without leaving the TUI. `R` on any run. Smart: re-runs only failed jobs on failures, full workflow otherwise.
 
