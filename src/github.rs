@@ -114,6 +114,19 @@ impl GithubClient {
         Ok(all_repos)
     }
 
+    pub async fn cancel_workflow(&self, repo: &str, run_id: u64) -> Result<()> {
+        let url =
+            format!("https://api.github.com/repos/{repo}/actions/runs/{run_id}/cancel");
+        let resp = self
+            .client
+            .post(&url)
+            .send()
+            .await
+            .context("cancel workflow")?;
+        resp.error_for_status()?;
+        Ok(())
+    }
+
     pub async fn rerun_workflow(&self, repo: &str, run_id: u64) -> Result<()> {
         let url =
             format!("https://api.github.com/repos/{repo}/actions/runs/{run_id}/rerun");

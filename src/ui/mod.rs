@@ -85,6 +85,7 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
             View::Dashboard => vec![
                 key(" j/k"), lbl(" nav "), key("\u{21B5}"), lbl(" detail "),
                 key("o"), lbl(" open "), key("R"), lbl(" rerun "),
+                key("C"), lbl(" cancel "),
                 key("/"), lbl(" search "), key("f"), lbl(" filter "),
                 key("a"), lbl(" repos "), key("r"), lbl(" refresh "),
                 key("q"), lbl(" quit"),
@@ -96,12 +97,12 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
             View::Detail => vec![
                 key(" j/k"), lbl(" nav "), key("^d/^u"), lbl(" page "),
                 key("o"), lbl(" open "), key("L"), lbl(" logs "),
-                key("R"), lbl(" rerun "),
+                key("R"), lbl(" rerun "), key("C"), lbl(" cancel "),
                 key("ESC"), lbl(" back "), key("q"), lbl(" quit"),
             ],
             View::LogView => vec![
                 key(" j/k"), lbl(" scroll "), key("^d/^u"), lbl(" page "),
-                key("g/G"), lbl(" top/end "),
+                key("g/G"), lbl(" top/end "), key("n/N"), lbl(" step "),
                 key("ESC"), lbl(" back "), key("q"), lbl(" quit"),
             ],
         },

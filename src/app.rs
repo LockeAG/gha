@@ -63,6 +63,7 @@ pub struct App {
     pub log_lines: Vec<String>,
     pub log_scroll: usize,
     pub log_job_name: String,
+    pub log_group_positions: Vec<usize>,
 }
 
 impl App {
@@ -101,6 +102,7 @@ impl App {
             log_lines: Vec::new(),
             log_scroll: 0,
             log_job_name: String::new(),
+            log_group_positions: Vec::new(),
         }
     }
 
@@ -201,6 +203,7 @@ impl App {
             KeyCode::Char('f') => self.input_mode = InputMode::Filter,
             KeyCode::Char('r') => return Some(AppAction::ForceRefresh),
             KeyCode::Char('R') => return self.rerun_selected(),
+            KeyCode::Char('C') => return self.cancel_selected(),
             KeyCode::Char('a') => {
                 if !self.all_org_repos.is_empty() {
                     self.view = View::RepoPicker;
@@ -304,6 +307,7 @@ impl App {
             }
             KeyCode::Enter | KeyCode::Char('o') => return self.open_in_browser(),
             KeyCode::Char('R') => return self.rerun_current(),
+            KeyCode::Char('C') => return self.cancel_current(),
             KeyCode::Char('L') | KeyCode::Char('l') => return self.view_logs(),
             _ => {}
         }
@@ -343,6 +347,25 @@ impl App {
             }
             KeyCode::Char('g') => self.log_scroll = 0,
             KeyCode::Char('G') => self.log_scroll = max_scroll,
+            KeyCode::Char('n') => {
+                if let Some(&pos) = self
+                    .log_group_positions
+                    .iter()
+                    .find(|&&p| p > self.log_scroll)
+                {
+                    self.log_scroll = pos.min(max_scroll);
+                }
+            }
+            KeyCode::Char('N') => {
+                if let Some(&pos) = self
+                    .log_group_positions
+                    .iter()
+                    .rev()
+                    .find(|&&p| p < self.log_scroll)
+                {
+                    self.log_scroll = pos;
+                }
+            }
             _ => {}
         }
         None
@@ -534,8 +557,28 @@ impl App {
         }
     }
 
+    fn cancel_selected(&self) -> Option<AppAction> {
+        let run = self.selected_run()?;
+        let repo = run.repository.full_name.clone();
+        Some(AppAction::CancelWorkflow(repo, run.id))
+    }
+
+    fn cancel_current(&self) -> Option<AppAction> {
+        let run_id = self.current_run_id?;
+        let run = self.runs.iter().find(|r| r.id == run_id)?;
+        let repo = run.repository.full_name.clone();
+        Some(AppAction::CancelWorkflow(repo, run_id))
+    }
+
     pub fn update_logs(&mut self, text: String) {
         self.log_lines = text.lines().map(String::from).collect();
+        self.log_group_positions = self
+            .log_lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.starts_with("##[group]"))
+            .map(|(i, _)| i)
+            .collect();
         // Auto-scroll to end (tail behavior)
         let max = self.log_lines.len().saturating_sub(self.visible_rows);
         self.log_scroll = max;
@@ -663,5 +706,6 @@ pub enum AppAction {
     ReposChanged(Vec<String>),
     RerunWorkflow(String, u64),
     RerunFailed(String, u64),
+    CancelWorkflow(String, u64),
     FetchLogs(String, u64),
 }

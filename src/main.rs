@@ -108,6 +108,8 @@ enum Command {
     },
     /// Generate sample config at ~/.config/gha/config.toml
     Init,
+    /// Print one-line status summary (for tmux status-right, etc.)
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -278,6 +280,13 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Handle status subcommand before TUI init
+    if let Some(Command::Status) = &cli.command {
+        let token = resolve_token(settings.token.clone())?;
+        let client = GithubClient::new(&token, settings.per_page)?;
+        return cmd_status(&settings, &client).await;
+    }
+
     ui::theme::init(&settings.theme);
 
     let token = resolve_token(settings.token.clone())?;
@@ -309,7 +318,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Some(Command::Init) => unreachable!(),
+        Some(Command::Init) | Some(Command::Status) => unreachable!(),
         None => {
             let interval = settings.interval.max(10);
 
@@ -351,6 +360,55 @@ async fn main() -> Result<()> {
 
             result?;
         }
+    }
+
+    Ok(())
+}
+
+async fn cmd_status(settings: &Settings, client: &GithubClient) -> Result<()> {
+    let (watched, _, _) = resolve_repos(settings, client).await?;
+
+    let futures: Vec<_> = watched.iter().map(|r| client.fetch_runs(r)).collect();
+    let results = futures::future::join_all(futures).await;
+
+    let mut success = 0u32;
+    let mut failure = 0u32;
+    let mut in_progress = 0u32;
+
+    for result in results {
+        if let Ok((resp, _)) = result {
+            for run in &resp.workflow_runs {
+                match run.status {
+                    models::RunStatus::Completed => match run.conclusion {
+                        Some(models::Conclusion::Success) => success += 1,
+                        Some(models::Conclusion::Failure)
+                        | Some(models::Conclusion::TimedOut)
+                        | Some(models::Conclusion::StartupFailure) => failure += 1,
+                        _ => {}
+                    },
+                    models::RunStatus::InProgress
+                    | models::RunStatus::Queued
+                    | models::RunStatus::Waiting => in_progress += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if success == 0 && failure == 0 && in_progress == 0 {
+        println!("--");
+    } else {
+        let mut parts = Vec::new();
+        if success > 0 {
+            parts.push(format!("\x1b[32m\u{2713} {success}\x1b[0m"));
+        }
+        if failure > 0 {
+            parts.push(format!("\x1b[31m\u{2717} {failure}\x1b[0m"));
+        }
+        if in_progress > 0 {
+            parts.push(format!("\x1b[33m\u{25CF} {in_progress}\x1b[0m"));
+        }
+        println!("{}", parts.join("  "));
     }
 
     Ok(())
@@ -542,6 +600,22 @@ async fn handle_action(
                     }
                     Err(e) => {
                         let _ = t.send(AppEvent::ApiError(format!("rerun: {e}"))).await;
+                    }
+                }
+            });
+        }
+        AppAction::CancelWorkflow(repo, run_id) => {
+            let c = client.clone();
+            let t = tx.clone();
+            tokio::spawn(async move {
+                match c.cancel_workflow(&repo, run_id).await {
+                    Ok(()) => {
+                        let _ = t
+                            .send(AppEvent::ApiError("Cancel triggered".to_string()))
+                            .await;
+                    }
+                    Err(e) => {
+                        let _ = t.send(AppEvent::ApiError(format!("cancel: {e}"))).await;
                     }
                 }
             });
